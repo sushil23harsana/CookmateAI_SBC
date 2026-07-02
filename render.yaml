@@ -1,0 +1,18 @@
+# Render blueprint: deploys the Cookmate engine API from this repo's Dockerfile.
+# In the Render dashboard: New + -> Blueprint -> pick this repo -> set the two
+# secret env vars when prompted. Free tier is fine for the demo.
+services:
+  - type: web
+    name: cookmate-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false # paste in the dashboard — never in the repo
+      - key: CORS_ORIGIN
+        sync: false # your Vercel URL, e.g. https://cookmate.vercel.app
+      - key: TRUST_PROXY
+        value: 'true' # Render fronts the service with a proxy
+      - key: COOKMATE_PROVIDER
+        value: mock # flip to swiggy + SWIGGY_MCP_TOKEN once access is granted

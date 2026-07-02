@@ -1,0 +1,8 @@
+node_modules
+web
+data
+.env
+.git
+.claude
+*.md
+submission
