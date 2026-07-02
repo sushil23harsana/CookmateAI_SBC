@@ -77,11 +77,18 @@ bun run web         # frontend on :3000
 
 ### Go live against Swiggy Instamart
 
-1. `.env`: `COOKMATE_PROVIDER=swiggy` and `SWIGGY_MCP_TOKEN=<bearer token>`.
-2. `bun run server`. The provider discovers tools from `mcp.swiggy.com/im`.
+1. `.env`: `COOKMATE_PROVIDER=swiggy` and `SWIGGY_MCP_TOKEN=<bearer token>` from the
+   OAuth 2.1 + PKCE flow (tokens last 5 days; v1 has no refresh — re-auth on 401).
+2. `bun run server`. The provider speaks the documented Instamart v1 contract:
+   `get_addresses → search_products → update_cart → get_cart → checkout → track_order`.
 
-Two clearly-marked go-live seams in `swiggyMcp.ts`: confirm the `normalizeSearch`
-field mapping, and wire `getItems` to Swiggy's authoritative cart/bill tool.
+Platform rules the provider enforces (per the Builders Club docs): a saved delivery
+address is required; cart items are variant `spinId`s; `update_cart` replaces the
+whole cart; `checkout` is COD-only, capped at ₹1000, and never blind-retried (on
+failure it verifies via `get_orders` before reporting an error).
+
+One go-live seam remains in `swiggyMcp.ts`: response FIELD names follow the docs'
+envelope but must be confirmed against one real connected session before ordering.
 
 ## Testing
 

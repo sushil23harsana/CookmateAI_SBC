@@ -61,6 +61,18 @@ sessions (the browser auto-creates a new one).
 None of these require rearchitecting — they swap an in-memory map for a shared
 store at a known boundary.
 
+## Swiggy platform alignment
+
+The live provider (`src/instamart/swiggyMcp.ts`) is written to the documented
+Builders Club Instamart v1 contract and encodes its platform rules: mandatory
+pre-checkout user confirmation (our confirm gate), the ₹99 minimum order, the
+₹1000 agent-checkout cap, COD-only v1 payments, `update_cart`'s replace
+semantics, non-idempotent `checkout` with the documented check-then-verify
+recovery via `get_orders`, backoff-with-jitter on retriable classes only, and
+the `success:false` domain-error envelope. Data posture matches the DPDP rules:
+no PII stored beyond the session, session-ID-only correlation logging, no use
+of Swiggy data for analytics or training.
+
 ## Known limitations (not hidden)
 
 - **No end-user auth yet** — sessions are anonymous. Fine for a gated demo;
