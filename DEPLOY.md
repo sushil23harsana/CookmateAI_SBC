@@ -10,7 +10,7 @@ Two pieces, two hosts (both free-tier friendly):
 ## 1. API → Render (~5 min)
 
 1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Blueprint** → pick the
-   `cookmate-ai` GitHub repo. Render reads `render.yaml` and shows one service: `cookmate-api`.
+   `CookmateAI_SBC` GitHub repo. Render reads `render.yaml` and shows one service: `cookmate-api`.
 2. When prompted for env vars:
    - `ANTHROPIC_API_KEY` — your key (same as local `.env`)
    - `CORS_ORIGIN` — your Vercel URL (add it after step 2; `https://<project>.vercel.app`)
@@ -22,7 +22,7 @@ demo or review, open `/api/health` once to warm it.
 
 ## 2. Web → Vercel (~5 min)
 
-1. [vercel.com/new](https://vercel.com/new) → **Import** the `cookmate-ai` repo.
+1. [vercel.com/new](https://vercel.com/new) → **Import** the `CookmateAI_SBC` repo.
 2. **Root Directory: `web`** (critical — the Next app lives there). Framework auto-detects.
 3. Environment variable: `NEXT_PUBLIC_API_BASE` = the Render URL from step 1
    (no trailing slash).
