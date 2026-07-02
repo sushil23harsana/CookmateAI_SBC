@@ -3,7 +3,7 @@
 **One line:** Tell Cookmate a dish or a budget; it turns that into a ready-to-order
 Swiggy Instamart cart — recipe → real SKUs → budget-fit → one-tap confirm → track.
 
-**Builder:** [YOUR NAME] · [EMAIL] · **Live demo:** [LINK] · **Demo video:** [LINK]
+**Builder:** [YOUR NAME] · [EMAIL] · **Live demo:** [LINK] · **Demo video:** [LINK] · **Code:** https://github.com/Sushil-harsana/cookmate-ai
 
 ---
 
