@@ -35,4 +35,4 @@ always sits behind a user confirmation (see THREAT_MODEL.md in the repo).
 **Demo video:** [VIDEO LINK] — 90 s, working end-to-end on a clearly-labelled
 demo catalogue pending production access.
 
-**Repo / live app:** https://github.com/Sushil-harsana/cookmate-ai · [LINK]
+**Repo / live app:** https://github.com/sushil23harsana/CookmateAI_SBC · [LINK]

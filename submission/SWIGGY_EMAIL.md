@@ -18,7 +18,7 @@ It's working end-to-end against your Instamart MCP tool schemas, today on a
 clearly-labelled demo catalogue:
 
 - **90-sec demo:** [VIDEO LINK]
-- **Live app:** [LINK]   (or the repo: https://github.com/Sushil-harsana/cookmate-ai)
+- **Live app:** [LINK]   (or the repo: https://github.com/sushil23harsana/CookmateAI_SBC)
 
 I built it to be safe to connect to Instamart from day one, since I know
 third-party access is under security review:
