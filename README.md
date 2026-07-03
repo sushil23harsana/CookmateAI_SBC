@@ -1,134 +1,88 @@
-# Cookmate AI — core engine (Phase 0, production-grade)
+# Cookmate AI 🍳
 
-Tell Cookmate a **dish** or a **budget**; it turns that into a ready-to-confirm
-Swiggy Instamart cart, then places and tracks the order. This is the
-**channel-agnostic core engine + a terminal harness** — the same engine a web app
-or WhatsApp adapter will wrap later.
+**Tell it what you want to eat. It builds your Swiggy Instamart cart.**
 
-```
-intent → recipe → real SKUs → budget-fit → review cart → (confirm) → order → track
-```
+"Healthy pasta for 2." "₹400 dinner for two." One sentence — Cookmate turns it
+into a ready-to-order grocery cart: the recipe, the exact ingredients, real
+store products that fit your budget, and one tap to order and track.
 
-## Architecture
+## What it does
 
-| Path | Role |
-|---|---|
-| `src/engine/executor.ts` | **The engine.** Declares every model-facing tool and executes it behind the safety layer (validation, cart binding, spend cap, idempotency, confirm gate). Channel-agnostic. |
-| `src/llm/agent.ts` · `src/llm/openai.ts` | Claude tool-use loop + its ChatGPT twin (manual loop = human-in-the-loop gate; iteration cap). |
-| `src/llm/fallback.ts` · `src/llm/factory.ts` | Automatic LLM failover: if the primary dies on credits/quota/auth, the conversation continues on the other provider. |
-| `src/llm/prompt.ts` | The Cookmate brain — recipe, budget, pantry, "never invent a total" rules. |
-| `src/core/budget.ts` | **Deterministic** budget optimizer (kept out of the LLM). |
-| `src/core/cart.ts` | Server-computed carts + spend-limit guard (hashed `cartId` binds confirmation to contents). |
-| `src/core/pantry.ts` | Per-user pantry memory (JSON now → Neon later). |
-| `src/validation/schemas.ts` | Zod schemas at every tool boundary. |
-| `src/instamart/provider.ts` | Semantic provider interface (`searchItems / getItems / placeOrder / trackOrder`). |
-| `src/instamart/mock.ts` | Fake `[DEMO]` catalog — runs the whole flow with **no Swiggy creds**. |
-| `src/instamart/swiggyMcp.ts` | Live Swiggy MCP client (tool discovery + tolerant normalizer). |
-| `src/config.ts` · `src/errors.ts` · `src/logger.ts` | Zod-validated env, typed errors, redacting logger (stderr). |
-| `src/cli.ts` | Thin terminal adapter: I/O + the confirm prompt only. |
+1. **Understands the meal** — you name a dish or a budget; Cookmate works out
+   the recipe, scales quantities to your servings, and adapts to how you eat
+   ("healthy" → whole wheat and more veg; veg / vegan / Jain respected).
+2. **Skips what you already have** — it remembers your pantry, so you never buy
+   salt twice.
+3. **Finds real products** — it searches the Instamart catalogue and picks the
+   right pack size for each ingredient, at real prices.
+4. **Fits your budget — with real math** — a deterministic optimizer (not the
+   AI guessing) fits the best basket under your cap: essentials always in,
+   extras trimmed transparently, with one tap to add them back.
+5. **Shows you the cart, then waits** — every price and total is computed from
+   store data. Nothing is ordered until *you* tap **Place order**.
+6. **Orders and tracks** — confirm once, then follow the delivery live.
 
-The agent only sees the engine's tools, and **money operations are never raw
-provider tools** — `place_order` goes through the gated wrapper. Swapping the
-mock for live Swiggy changes only the four provider methods.
+## Why it's safe to trust with money
 
-## Safety model (enforced, with tests)
+The AI proposes; deterministic code disposes. These guarantees are enforced in
+code the model cannot reach, and covered by automated tests:
 
-- **Authoritative carts** — `review_cart` computes prices/totals from provider
-  data, not the model. The model is forbidden from stating a total it didn't get
-  from a tool.
-- **Cart binding** — `place_order` takes a `cart_id` from `review_cart`; the order
-  uses the stored canonical cart, so the model can't show one cart and order
-  another.
-- **Hard spend cap** — `COOKMATE_MAX_ORDER_VALUE` blocks over-limit orders before
-  the gate.
-- **Confirm gate** — an order is placed only after an explicit human `yes`.
-- **Idempotency** — one order per cart; retries replay the same order.
-- **Recoverable errors** — bad tool inputs become validation errors the model
-  fixes and retries, not crashes.
+- **The AI can never invent a price or total.** Carts are computed server-side
+  from the store's own data.
+- **The cart you see is the cart you're charged for.** Orders are bound to the
+  exact reviewed cart — showing one thing and charging another is impossible.
+- **Nothing is bought without your tap**, and a hard spend cap sits behind even
+  that.
+- **Retries never double-charge.** Ordering is idempotent end to end.
+- The API is rate-limited, input-validated, and keeps every user's data
+  isolated.
 
-These are covered by `src/engine/executor.test.ts` (deterministic, no LLM).
+The full adversarial review — 14 attack vectors, each mapped to its mitigation
+and its test — is in [THREAT_MODEL.md](THREAT_MODEL.md). An honest engineering
+assessment is in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 
-## Run it (Bun)
+## How it works
 
-Uses [Bun](https://bun.sh) as the package manager **and** runtime (it runs the
-TypeScript directly — no build step, no `tsx`).
+A channel-agnostic ordering engine (TypeScript on Bun) sits between the AI and
+the store. The AI runs in a tool-use loop — it can search products, run the
+budget optimizer, and request carts, but money operations only pass through the
+engine's safety gates. A streaming API (Hono) serves a polished chat web app
+(Next.js) with live agent-phase animations; the same engine also runs in a
+terminal, and a WhatsApp surface can wrap it later.
 
-```bash
-bun install                                 # root deps
-cd web && bun install && cd ..              # web deps
-cp .env.example .env                        # put your ANTHROPIC_API_KEY in .env
+- **Brain:** Claude by default, with automatic ChatGPT failover — if one
+  provider runs out of credits mid-conversation, the chat continues seamlessly
+  on the other.
+- **Store:** runs today on a clearly-labelled `[DEMO]` catalogue with zero
+  credentials; the live **Swiggy Instamart MCP** integration is already written
+  to the documented Builders Club contract and flips on with a token.
 
-bun run app                                 # ⭐ starts BOTH: API :8787 + web UI :3000
-# then open http://localhost:3000
-```
-
-### LLM fallback (Claude ⇄ ChatGPT)
-
-Claude is the default brain. Set `OPENAI_API_KEY` in `.env` and OpenAI becomes a
-**live fallback**: if an Anthropic call fails with a credit/quota/auth error, the
-conversation switches to `OPENAI_MODEL` mid-session and keeps going. To run on
-ChatGPT as the primary instead (e.g. while Claude credits are low), set
-`COOKMATE_LLM=openai` — Claude then serves as the fallback. `/api/health` reports
-which brain is active and whether a fallback is armed.
-
-CLI / engine only:
+## Run it
 
 ```bash
-bun run dev                                 # interactive terminal chat (mock provider)
-bun src/cli.ts --once "₹400 healthy pasta for 2"   # one-shot (auto-declines order)
+bun install && cd web && bun install && cd ..
+cp .env.example .env        # add your ANTHROPIC_API_KEY (and/or OPENAI_API_KEY)
+
+bun run app                 # API :8787 + web UI :3000 → open http://localhost:3000
 ```
 
-Run the two processes separately if you prefer two terminals:
+Prefer a terminal? `bun run dev` gives the same assistant as a CLI chat.
+
+**Go live on Swiggy:** set `COOKMATE_PROVIDER=swiggy` and `SWIGGY_MCP_TOKEN`
+(OAuth 2.1 bearer) in `.env` — same app, real inventory. Deployment guide:
+[DEPLOY.md](DEPLOY.md).
+
+## Quality
 
 ```bash
-bun run server      # backend API on :8787
-bun run web         # frontend on :3000
+bun run check    # typecheck + lint + format + full test suite
 ```
 
-### Go live against Swiggy Instamart
+The money path — cart binding, spend cap, confirm gate, idempotency, budget
+math — is covered by deterministic tests that run without any API keys.
+Manual test playbook: [TESTING.md](TESTING.md).
 
-1. `.env`: `COOKMATE_PROVIDER=swiggy` and `SWIGGY_MCP_TOKEN=<bearer token>` from the
-   OAuth 2.1 + PKCE flow (tokens last 5 days; v1 has no refresh — re-auth on 401).
-2. `bun run server`. The provider speaks the documented Instamart v1 contract:
-   `get_addresses → search_products → update_cart → get_cart → checkout → track_order`.
+---
 
-Platform rules the provider enforces (per the Builders Club docs): a saved delivery
-address is required; cart items are variant `spinId`s; `update_cart` replaces the
-whole cart; `checkout` is COD-only, capped at ₹1000, and never blind-retried (on
-failure it verifies via `get_orders` before reporting an error).
-
-One go-live seam remains in `swiggyMcp.ts`: response FIELD names follow the docs'
-envelope but must be confirmed against one real connected session before ordering.
-
-## Testing
-
-```bash
-bun run check        # the full gate: typecheck + lint + format + tests
-bun run test         # just the engine unit + integration tests
-bun run typecheck    # types only
-```
-
-What's covered: `src/core/budget.test.ts` (optimizer), `src/core/cart.test.ts`
-(cart math + spend cap + cart-id binding), `src/validation/schemas.test.ts`
-(input validation), `src/engine/executor.test.ts` (the order-safety guarantees —
-idempotency, spend cap, confirm gate, unknown cart). See `TESTING.md` for manual
-API/UI test steps.
-
-## Scripts
-
-| Script | Does |
-|---|---|
-| `bun run app` | Start backend + frontend together |
-| `bun run server` / `bun run web` | Start one side |
-| `bun run dev` | Terminal chat (engine only) |
-| `bun run check` | typecheck + lint + format:check + test (CI gate) |
-| `bun run test` | Unit + integration tests |
-| `bun run lint` / `lint:fix` · `bun run format` / `format:check` | ESLint / Prettier |
-
-## Deliberately deferred (belongs to the web/Phase 1 service)
-
-- Real OAuth 2.1 PKCE (bearer token is the Phase 0 shortcut).
-- Live Swiggy `getItems` + response normalization (the two seams above).
-- Persistence beyond a JSON pantry (move users/orders/pantry to Neon).
-- Deterministic quantity→pack math (currently LLM-reasoned).
-- The web (and later WhatsApp) channel — both just wrap `src/engine`.
+Built for the [Swiggy Builders Club](https://mcp.swiggy.com/builders/) — an AI
+agent that treats other people's money the way it should be treated.
