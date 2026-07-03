@@ -1,11 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
 import * as readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 
 import { config, assertRuntimeConfig } from './config.js';
 import { logger } from './logger.js';
 import { CookmateError } from './errors.js';
-import { CookmateAgent } from './llm/agent.js';
+import { createLlm, primaryModelLabel } from './llm/factory.js';
 import { systemPrompt } from './llm/prompt.js';
 import { CartStore } from './core/cart.js';
 import { createExecutor, toolDefs } from './engine/executor.js';
@@ -60,16 +59,12 @@ async function main(): Promise<void> {
     cleanup().finally(() => process.exit(0));
   });
 
-  console.log(`${BOLD}Cookmate AI${RESET} ${DIM}(provider=${provider.name} · model=${config.model})${RESET}`);
+  console.log(
+    `${BOLD}Cookmate AI${RESET} ${DIM}(provider=${provider.name} · model=${primaryModelLabel()})${RESET}`,
+  );
   console.log(
     `${DIM}Tell me a dish or a budget. e.g. "healthy pasta for 2" or "₹400 pasta dinner". Ctrl+C to quit.${RESET}\n`,
   );
-
-  const client = new Anthropic({
-    apiKey: config.anthropicApiKey,
-    maxRetries: config.maxRetries,
-    timeout: config.requestTimeoutMs,
-  });
 
   const execute = createExecutor({
     provider,
@@ -90,9 +85,7 @@ async function main(): Promise<void> {
     onOrderPlaced: (order) => console.log(`${GREEN}✓ order placed: ${order.orderId}${RESET}`),
   });
 
-  const agent = new CookmateAgent({
-    client,
-    model: config.model,
+  const agent = createLlm({
     system: systemPrompt(),
     tools: toolDefs(),
     execute,

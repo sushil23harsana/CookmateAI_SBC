@@ -1,27 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ToolDef, ToolResult } from '../types.js';
+import type { AgentDeps, ChatLlm, NeutralMsg } from './llm.js';
 import { logger } from '../logger.js';
 
-export interface AgentEvents {
-  onText?: (text: string) => void;
-  onToolCall?: (name: string, input: Record<string, unknown>) => void;
-  /** Streams assistant text deltas as the model writes them. Enables live typing. */
-  onTextDelta?: (delta: string) => void;
-}
-
-export interface AgentOptions {
+export interface AnthropicAgentOptions extends AgentDeps {
   client: Anthropic;
   model: string;
-  system: string;
-  tools: ToolDef[];
-  execute: (name: string, input: Record<string, unknown>) => Promise<ToolResult>;
-  /** Safety valve: max tool round-trips per user turn before bailing out. */
-  maxIterations: number;
-  events?: AgentEvents;
 }
 
 /**
- * CookmateAgent — a manual Claude tool-use loop that holds one conversation.
+ * CookmateAgent — the Claude (Anthropic) tool-use loop, holding one conversation.
  *
  * We use the MANUAL loop (not the SDK tool runner) on purpose: it's where the
  * human-in-the-loop confirm gate lives. The harness decides whether a tool runs
@@ -30,15 +17,43 @@ export interface AgentOptions {
  * Adaptive thinking + effort:high power strong recipe/budget planning; the full
  * assistant content (including thinking blocks) is echoed back each turn, which
  * the API requires. An iteration cap prevents runaway tool loops.
+ *
+ * State discipline: a failed turn rolls `messages` back to its checkpoint, so a
+ * retry — or a fallback provider seeded from transcript() — starts clean.
  */
-export class CookmateAgent {
+export class CookmateAgent implements ChatLlm {
+  readonly name = 'anthropic';
+  readonly label: string;
   private messages: Anthropic.MessageParam[] = [];
+  private neutral: NeutralMsg[] = [];
 
-  constructor(private readonly opts: AgentOptions) {}
+  constructor(private readonly opts: AnthropicAgentOptions) {
+    this.label = opts.model;
+  }
+
+  transcript(): NeutralMsg[] {
+    return [...this.neutral];
+  }
+
+  seed(transcript: NeutralMsg[]): void {
+    this.neutral = [...transcript];
+    this.messages = transcript.map((m) => ({ role: m.role, content: m.text }));
+  }
 
   async send(userText: string): Promise<string> {
+    const checkpoint = this.messages.length;
     this.messages.push({ role: 'user', content: userText });
+    try {
+      const text = await this.runLoop();
+      this.neutral.push({ role: 'user', text: userText }, { role: 'assistant', text });
+      return text;
+    } catch (err) {
+      this.messages.length = checkpoint; // clean state for a retry or fallback
+      throw err;
+    }
+  }
 
+  private async runLoop(): Promise<string> {
     for (let iteration = 0; iteration < this.opts.maxIterations; iteration++) {
       const params: Anthropic.MessageCreateParamsNonStreaming = {
         model: this.opts.model,

@@ -15,7 +15,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "test": "bun src/core/budget.test.ts && bun src/core/cart.test.ts && bun src/validation/schemas.test.ts && bun src/engine/executor.test.ts",
+    "test": "bun src/core/budget.test.ts && bun src/core/cart.test.ts && bun src/validation/schemas.test.ts && bun src/engine/executor.test.ts && bun src/llm/fallback.test.ts",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test"
   },
   "dependencies": {
@@ -24,6 +24,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
     "hono": "^4.12.27",
+    "openai": "^6.45.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

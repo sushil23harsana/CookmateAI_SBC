@@ -14,7 +14,8 @@ intent → recipe → real SKUs → budget-fit → review cart → (confirm) →
 | Path | Role |
 |---|---|
 | `src/engine/executor.ts` | **The engine.** Declares every model-facing tool and executes it behind the safety layer (validation, cart binding, spend cap, idempotency, confirm gate). Channel-agnostic. |
-| `src/llm/agent.ts` | Claude tool-use loop (manual loop = human-in-the-loop gate; iteration cap). |
+| `src/llm/agent.ts` · `src/llm/openai.ts` | Claude tool-use loop + its ChatGPT twin (manual loop = human-in-the-loop gate; iteration cap). |
+| `src/llm/fallback.ts` · `src/llm/factory.ts` | Automatic LLM failover: if the primary dies on credits/quota/auth, the conversation continues on the other provider. |
 | `src/llm/prompt.ts` | The Cookmate brain — recipe, budget, pantry, "never invent a total" rules. |
 | `src/core/budget.ts` | **Deterministic** budget optimizer (kept out of the LLM). |
 | `src/core/cart.ts` | Server-computed carts + spend-limit guard (hashed `cartId` binds confirmation to contents). |
@@ -60,6 +61,15 @@ cp .env.example .env                        # put your ANTHROPIC_API_KEY in .env
 bun run app                                 # ⭐ starts BOTH: API :8787 + web UI :3000
 # then open http://localhost:3000
 ```
+
+### LLM fallback (Claude ⇄ ChatGPT)
+
+Claude is the default brain. Set `OPENAI_API_KEY` in `.env` and OpenAI becomes a
+**live fallback**: if an Anthropic call fails with a credit/quota/auth error, the
+conversation switches to `OPENAI_MODEL` mid-session and keeps going. To run on
+ChatGPT as the primary instead (e.g. while Claude credits are low), set
+`COOKMATE_LLM=openai` — Claude then serves as the fallback. `/api/health` reports
+which brain is active and whether a fallback is armed.
 
 CLI / engine only:
 

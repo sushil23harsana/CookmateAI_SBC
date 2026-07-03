@@ -24,7 +24,9 @@ app.get('/api/health', (c) =>
   c.json({
     ok: true,
     provider: config.provider,
-    model: config.model,
+    llm: config.llm,
+    model: config.llm === 'openai' ? config.openaiModel : config.model,
+    fallback: config.llm === 'openai' ? Boolean(config.anthropicApiKey) : Boolean(config.openaiApiKey),
     sessions: sessionCount(),
     uptimeSec: Math.round(process.uptime()),
   }),

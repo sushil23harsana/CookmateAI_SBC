@@ -12,6 +12,13 @@ const EnvSchema = z.object({
   COOKMATE_MODEL: z.string().min(1).default('claude-opus-4-8'),
   COOKMATE_PROVIDER: z.enum(['mock', 'swiggy']).default('mock'),
 
+  // --- LLM selection + fallback ---
+  // Primary brain. With BOTH keys set, the other provider becomes a live
+  // fallback: credit/quota/auth failures switch the conversation over.
+  COOKMATE_LLM: z.enum(['anthropic', 'openai']).default('anthropic'),
+  OPENAI_API_KEY: z.string().default(''),
+  OPENAI_MODEL: z.string().min(1).default('gpt-5.1'),
+
   SWIGGY_MCP_URL: z.string().url().default('https://mcp.swiggy.com/im'),
   SWIGGY_MCP_TOKEN: z.string().default(''),
 
@@ -50,6 +57,9 @@ function load() {
     anthropicApiKey: e.ANTHROPIC_API_KEY,
     model: e.COOKMATE_MODEL,
     provider: e.COOKMATE_PROVIDER,
+    llm: e.COOKMATE_LLM,
+    openaiApiKey: e.OPENAI_API_KEY,
+    openaiModel: e.OPENAI_MODEL,
     swiggyMcpUrl: e.SWIGGY_MCP_URL,
     swiggyMcpToken: e.SWIGGY_MCP_TOKEN,
     deliveryFee: e.COOKMATE_DELIVERY_FEE,
@@ -77,8 +87,16 @@ export type ProviderName = Config['provider'];
 
 /** Enforce what a live run requires. Throws ConfigError with an actionable message. */
 export function assertRuntimeConfig(): void {
-  if (!config.anthropicApiKey) {
-    throw new ConfigError('ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in.');
+  if (config.llm === 'anthropic' && !config.anthropicApiKey) {
+    throw new ConfigError(
+      'ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in ' +
+        '(or set COOKMATE_LLM=openai with an OPENAI_API_KEY).',
+    );
+  }
+  if (config.llm === 'openai' && !config.openaiApiKey) {
+    throw new ConfigError(
+      'COOKMATE_LLM=openai but OPENAI_API_KEY is empty. Set a key, or use COOKMATE_LLM=anthropic.',
+    );
   }
   if (config.provider === 'swiggy' && !config.swiggyMcpToken) {
     throw new ConfigError(

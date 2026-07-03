@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
-import { CookmateAgent } from '../llm/agent.js';
+import { createLlm } from '../llm/factory.js';
+import type { ChatLlm } from '../llm/llm.js';
 import { systemPrompt } from '../llm/prompt.js';
 import { CartStore } from '../core/cart.js';
 import { MemoryPantry } from '../core/pantry.js';
@@ -22,7 +22,7 @@ export interface Session {
   provider: InstamartProvider;
   carts: CartStore;
   execute: Executor;
-  agent: CookmateAgent;
+  agent: ChatLlm;
   bus: EventEmitter;
   /**
    * One-shot confirm gate: holds the cartId the user just approved by tapping
@@ -39,12 +39,6 @@ export interface Session {
 }
 
 const sessions = new Map<string, Session>();
-
-const client = new Anthropic({
-  apiKey: config.anthropicApiKey,
-  maxRetries: config.maxRetries,
-  timeout: config.requestTimeoutMs,
-});
 
 /** Map a tool name to a UI animation phase. */
 const PHASE: Record<string, string> = {
@@ -91,9 +85,7 @@ export function createSession(): Session {
     onOrderPlaced: (order, cart) => bus.emit('order', { order, cart }),
   });
 
-  session.agent = new CookmateAgent({
-    client,
-    model: config.model,
+  session.agent = createLlm({
     system: systemPrompt('web'),
     tools: toolDefs(),
     execute: session.execute,
