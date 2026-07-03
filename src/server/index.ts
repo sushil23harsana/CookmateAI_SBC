@@ -11,7 +11,8 @@ import type { Cart } from '../types.js';
 
 assertRuntimeConfig();
 
-const allowedOrigins = config.corsOrigin.split(',').map((s) => s.trim());
+// Origin headers never carry a trailing slash — strip it so a pasted URL still matches.
+const allowedOrigins = config.corsOrigin.split(',').map((s) => s.trim().replace(/\/+$/, ''));
 
 const app = new Hono();
 
