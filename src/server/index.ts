@@ -24,6 +24,7 @@ app.use('/api/*', cors({ origin: allowedOrigins, maxAge: 600 }));
 app.get('/api/health', (c) =>
   c.json({
     ok: true,
+    commit: (process.env.RENDER_GIT_COMMIT ?? 'dev').slice(0, 7),
     provider: config.provider,
     llm: config.llm,
     model: config.llm === 'openai' ? config.openaiModel : config.model,
@@ -61,8 +62,12 @@ app.post('/api/chat', async (c) => {
   session.busy = true;
 
   return streamSSE(c, async (stream) => {
+    let cartSeenThisTurn = false;
     const onStatus = (p: unknown) => stream.writeSSE({ event: 'status', data: JSON.stringify(p) });
-    const onCart = (cart: Cart) => stream.writeSSE({ event: 'cart', data: JSON.stringify(cart) });
+    const onCart = (cart: Cart) => {
+      cartSeenThisTurn = true;
+      return stream.writeSSE({ event: 'cart', data: JSON.stringify(cart) });
+    };
     const onDelta = (delta: string) => stream.writeSSE({ event: 'delta', data: JSON.stringify({ delta }) });
     session.bus.on('status', onStatus);
     session.bus.on('cart', onCart);
@@ -70,7 +75,20 @@ app.post('/api/chat', async (c) => {
 
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ phase: 'recipe' }) });
     try {
-      const text = await session.agent.send(message);
+      let text = await session.agent.send(message);
+      // Deterministic guard: the model may claim cart changes and point at the
+      // "Place order" button without having called review_cart — in which case
+      // no cart card exists in the UI and nothing was actually changed. Force
+      // exactly one corrective re-review; the prompt rule alone is probabilistic.
+      if (!cartSeenThisTurn && /place order/i.test(text)) {
+        logger.warn('reply referenced Place order without a reviewed cart — nudging re-review');
+        text = await session.agent.send(
+          'SYSTEM CHECK (not the user): Your reply told the user to tap "Place order" ' +
+            'but you did not call review_cart this turn, so NO cart card exists and none ' +
+            'of the changes you described were applied. Call review_cart now with the ' +
+            'complete current sku list matching what you described, then reply in one short line.',
+        );
+      }
       await stream.writeSSE({ event: 'message', data: JSON.stringify({ text }) });
     } catch (err) {
       logger.error('chat turn failed', err);
