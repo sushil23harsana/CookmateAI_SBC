@@ -19,6 +19,11 @@ export default function Chat() {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [phase, setPhase] = useState<Phase | null>(null);
   const [busy, setBusy] = useState(false);
+  // The most recent reviewed cart, surfaced in a sticky bar so the Place order
+  // action is always reachable even when the cart card has scrolled far up.
+  const [latestCart, setLatestCart] = useState<Cart | null>(null);
+  const [latestOrdered, setLatestOrdered] = useState(false);
+  const [barPlacing, setBarPlacing] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -26,7 +31,15 @@ export default function Chat() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem('cookmate_items');
-      if (saved) setItems(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved) as ChatItem[];
+        setItems(parsed);
+        const lastCart = [...parsed].reverse().find((it) => it.kind === 'cart' && it.cart);
+        if (lastCart?.cart) {
+          setLatestCart(lastCart.cart);
+          setLatestOrdered(!!lastCart.ordered);
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -94,7 +107,11 @@ export default function Chat() {
             }
             setPhase(p as Phase);
           },
-          onCart: (cart: Cart) => push({ id: uid(), kind: 'cart', role: 'assistant', cart, ordered: false }),
+          onCart: (cart: Cart) => {
+            push({ id: uid(), kind: 'cart', role: 'assistant', cart, ordered: false });
+            setLatestCart(cart);
+            setLatestOrdered(false);
+          },
           onDelta: (delta) => {
             setPhase(null); // the model is answering now — hand off from the working state
             if (!streamingIdRef.current) {
@@ -151,6 +168,7 @@ export default function Chat() {
       setItems((p) =>
         p.map((it) => (it.kind === 'cart' && it.cart?.cartId === cart.cartId ? { ...it, ordered: true } : it)),
       );
+      setLatestOrdered((prev) => (latestCart?.cartId === cart.cartId ? true : prev));
       push({ id: uid(), kind: 'order', role: 'assistant', order: res.order });
     } else {
       push({
@@ -206,6 +224,29 @@ export default function Chat() {
         })}
         <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
       </div>
+
+      {latestCart && !latestOrdered ? (
+        <div className="cartbar">
+          <div className="cartbar-info">
+            🧺 {latestCart.lines.reduce((s, l) => s + l.qty, 0)} items · <strong>₹{latestCart.total}</strong>
+          </div>
+          <button
+            className="cartbar-btn"
+            disabled={busy || barPlacing}
+            onClick={async () => {
+              if (!latestCart) return;
+              setBarPlacing(true);
+              try {
+                await placeOrder(latestCart);
+              } finally {
+                setBarPlacing(false);
+              }
+            }}
+          >
+            {barPlacing ? 'Placing…' : 'Place order'}
+          </button>
+        </div>
+      ) : null}
 
       <Composer onSend={send} busy={busy} />
       </div>

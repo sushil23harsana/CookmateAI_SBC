@@ -668,6 +668,60 @@ body {
   margin-right: 7px;
 }
 
+/* ---------- sticky cart bar ---------- */
+.cartbar {
+  flex: 0 0 auto;
+  margin: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  padding: 10px 12px 10px 16px;
+  box-shadow: var(--shadow);
+}
+.cartbar-info {
+  font-size: 14.5px;
+  color: var(--ink-2);
+}
+.cartbar-info strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.cartbar-btn {
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 14.5px;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--saffron-2), var(--tomato));
+  box-shadow: 0 8px 18px -8px rgba(222, 77, 42, 0.6);
+  transition:
+    transform 0.12s ease,
+    filter 0.12s ease,
+    opacity 0.12s ease;
+}
+.cartbar-btn:hover {
+  filter: brightness(1.05);
+}
+.cartbar-btn:active {
+  transform: scale(0.97);
+}
+.cartbar-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 520px) {
+  .cartbar {
+    margin: 0 12px;
+  }
+}
+
 /* ---------- composer ---------- */
 .composer {
   flex: 0 0 auto;

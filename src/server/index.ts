@@ -82,6 +82,12 @@ app.post('/api/chat', async (c) => {
       // exactly one corrective re-review; the prompt rule alone is probabilistic.
       if (!cartSeenThisTurn && /place order/i.test(text)) {
         logger.warn('reply referenced Place order without a reviewed cart — nudging re-review');
+        // Tell the UI a cart rebuild is starting so it closes the streamed bubble
+        // cleanly — otherwise the nudged reply's text can merge into the first one.
+        await stream.writeSSE({
+          event: 'status',
+          data: JSON.stringify({ phase: 'cart', tool: 'review_cart' }),
+        });
         text = await session.agent.send(
           'SYSTEM CHECK (not the user): Your reply told the user to tap "Place order" ' +
             'but you did not call review_cart this turn, so NO cart card exists and none ' +
