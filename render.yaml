@@ -8,6 +8,10 @@ services:
     plan: free
     healthCheckPath: /api/health
     envVars:
+      - key: COOKMATE_LLM
+        value: openai # primary brain; the other provider's key (if set) is the fallback
+      - key: OPENAI_API_KEY
+        sync: false # paste in the dashboard — never in the repo
       - key: ANTHROPIC_API_KEY
         sync: false # paste in the dashboard — never in the repo
       - key: CORS_ORIGIN
