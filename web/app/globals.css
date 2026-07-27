@@ -158,6 +158,11 @@ body {
   gap: 14px;
   scroll-behavior: smooth;
 }
+/* Cards set overflow:hidden, which zeroes a flex item's automatic minimum
+   size — without this, they get squashed once the chat outgrows the view. */
+.stream > * {
+  flex-shrink: 0;
+}
 .stream::-webkit-scrollbar {
   width: 8px;
 }
