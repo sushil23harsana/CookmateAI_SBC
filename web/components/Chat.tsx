@@ -9,6 +9,7 @@ import Composer from './Composer';
 import MessageBubble from './MessageBubble';
 import WorkingState from './WorkingState';
 import CartCard from './CartCard';
+import CartDock from './CartDock';
 import OrderCard from './OrderCard';
 
 let counter = 0;
@@ -23,7 +24,6 @@ export default function Chat() {
   // action is always reachable even when the cart card has scrolled far up.
   const [latestCart, setLatestCart] = useState<Cart | null>(null);
   const [latestOrdered, setLatestOrdered] = useState(false);
-  const [barPlacing, setBarPlacing] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -225,28 +225,7 @@ export default function Chat() {
         <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
       </div>
 
-      {latestCart && !latestOrdered ? (
-        <div className="cartbar">
-          <div className="cartbar-info">
-            🧺 {latestCart.lines.reduce((s, l) => s + l.qty, 0)} items · <strong>₹{latestCart.total}</strong>
-          </div>
-          <button
-            className="cartbar-btn"
-            disabled={busy || barPlacing}
-            onClick={async () => {
-              if (!latestCart) return;
-              setBarPlacing(true);
-              try {
-                await placeOrder(latestCart);
-              } finally {
-                setBarPlacing(false);
-              }
-            }}
-          >
-            {barPlacing ? 'Placing…' : 'Place order'}
-          </button>
-        </div>
-      ) : null}
+      {latestCart && !latestOrdered ? <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} /> : null}
 
       <Composer onSend={send} busy={busy} />
       </div>

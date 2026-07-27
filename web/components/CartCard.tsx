@@ -4,9 +4,9 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import type { Cart } from '@/lib/types';
 
-const cleanName = (n: string) => n.replace(/^\[DEMO\]\s*/, '');
+export const cleanName = (n: string) => n.replace(/^\[DEMO\]\s*/, '');
 
-function emojiFor(name: string): string {
+export function emojiFor(name: string): string {
   const n = name.toLowerCase();
   const map: [string, string][] = [
     ['pasta', '🍝'],

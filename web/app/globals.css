@@ -673,23 +673,50 @@ body {
   margin-right: 7px;
 }
 
-/* ---------- sticky cart bar ---------- */
-.cartbar {
+/* ---------- collapsible cart dock ---------- */
+.cartdock {
   flex: 0 0 auto;
   margin: 0 16px;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden; /* clips the expand/collapse animation */
+}
+.cartdock-panel {
+  overflow: hidden;
+  border-bottom: 1px dashed var(--line);
+}
+.cartdock-panel .lines {
+  max-height: 38vh;
+  overflow-y: auto;
+  padding-top: 6px;
+}
+.cartdock-panel .totals {
+  padding-bottom: 12px;
+}
+.cartbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: var(--card);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-lg);
   padding: 10px 12px 10px 16px;
-  box-shadow: var(--shadow);
+  cursor: pointer;
+  user-select: none;
 }
 .cartbar-info {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 14.5px;
   color: var(--ink-2);
+}
+.chev {
+  color: var(--ink-3);
+  transition: transform 0.22s ease;
+}
+.cartbar[aria-expanded='true'] .chev {
+  transform: rotate(180deg);
 }
 .cartbar-info strong {
   color: var(--ink);
@@ -722,7 +749,7 @@ body {
   cursor: default;
 }
 @media (max-width: 520px) {
-  .cartbar {
+  .cartdock {
     margin: 0 12px;
   }
 }
