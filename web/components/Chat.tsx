@@ -34,7 +34,13 @@ export default function Chat() {
       if (saved) {
         const parsed = JSON.parse(saved) as ChatItem[];
         setItems(parsed);
-        const lastCart = [...parsed].reverse().find((it) => it.kind === 'cart' && it.cart);
+        // Prefer the saved dock state: manual +/- edits produce carts that
+        // never appear as cards in the stream.
+        const dock = localStorage.getItem('cookmate_dock');
+        const d = dock ? (JSON.parse(dock) as { cart?: Cart; ordered?: boolean }) : null;
+        const lastCart = d?.cart
+          ? { cart: d.cart, ordered: !!d.ordered }
+          : [...parsed].reverse().find((it) => it.kind === 'cart' && it.cart);
         if (lastCart?.cart) {
           setLatestCart(lastCart.cart);
           setLatestOrdered(!!lastCart.ordered);
@@ -53,6 +59,15 @@ export default function Chat() {
       /* ignore */
     }
   }, [items, busy]);
+
+  useEffect(() => {
+    if (!latestCart) return;
+    try {
+      localStorage.setItem('cookmate_dock', JSON.stringify({ cart: latestCart, ordered: latestOrdered }));
+    } catch {
+      /* ignore */
+    }
+  }, [latestCart, latestOrdered]);
 
   useEffect(() => {
     const saved = typeof window !== 'undefined' ? localStorage.getItem('cookmate_session') : null;
@@ -180,6 +195,30 @@ export default function Chat() {
     }
   };
 
+  // +/- steppers: rebuild the sku list with the new quantity and have the
+  // server re-review it — the fresh authoritative snapshot replaces the dock cart.
+  const changeQty = async (skuId: string, qty: number) => {
+    if (!sessionId || !latestCart) return;
+    const skuIds = latestCart.lines.flatMap((l) =>
+      Array<string>(Math.max(0, l.id === skuId ? qty : l.qty)).fill(l.id),
+    );
+    if (skuIds.length === 0) return; // a cart can't be reviewed empty
+    try {
+      const res = await api.updateCart(sessionId, skuIds);
+      if (res.cart) {
+        setLatestCart(res.cart);
+        setLatestOrdered(false);
+      }
+    } catch (err) {
+      push({
+        id: uid(),
+        kind: 'text',
+        role: 'assistant',
+        text: err instanceof api.ApiError ? err.message : 'I could not update the cart — mind telling me instead?',
+      });
+    }
+  };
+
   const track = async (orderId: string): Promise<string> => {
     if (!sessionId) return orderId;
     const r = await api.trackOrder(sessionId, orderId);
@@ -225,7 +264,9 @@ export default function Chat() {
         <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
       </div>
 
-      {latestCart && !latestOrdered ? <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} /> : null}
+      {latestCart && !latestOrdered ? (
+        <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} onChangeQty={changeQty} />
+      ) : null}
 
       <Composer onSend={send} busy={busy} />
       </div>

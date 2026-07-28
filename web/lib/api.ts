@@ -101,6 +101,17 @@ function dispatch(raw: string, h: ChatHandlers): void {
   }
 }
 
+/** Re-review the cart server-side with a new sku list (repeat an id for qty > 1). */
+export async function updateCart(sessionId: string, skuIds: string[]): Promise<{ cart?: Cart }> {
+  const r = await fetch(`${BASE}/api/cart`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, skuIds }),
+  });
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
+}
+
 export async function placeOrder(
   sessionId: string,
   cartId: string,

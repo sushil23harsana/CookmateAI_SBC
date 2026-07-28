@@ -34,6 +34,12 @@ export interface Session {
   /** True while a chat turn is running — the agent conversation is not reentrant. */
   busy: boolean;
   lastCartId?: string;
+  /**
+   * Set when the user adjusts quantities with the cart's +/- buttons (a
+   * server-side re-review the model never saw). Consumed by the next chat
+   * turn, which tells the model the current list so it doesn't revert edits.
+   */
+  manualSkuIds?: string[];
   createdAt: number;
   lastSeenAt: number;
 }

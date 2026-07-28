@@ -161,4 +161,22 @@ async function review(execute: ReturnType<typeof createExecutor>, ids: string[])
   assert.equal(provider.placeCount, 1);
 }
 
+// 8) A repeated sku_id means qty > 1, even when the provider dedupes ids
+//    (the real catalog providers return one item per unique id).
+{
+  const provider = new FakeProvider();
+  const dedupingGetItems = provider.getItems.bind(provider);
+  provider.getItems = async (ids: string[]) => dedupingGetItems([...new Set(ids)]);
+  const execute = createExecutor({
+    provider,
+    carts: new CartStore(),
+    confirmOrder: async () => true,
+    ...base,
+  });
+  const cart = await review(execute, ['a', 'a', 'b']);
+  const lineA = cart.lines.find((l: { id: string }) => l.id === 'a');
+  assert.equal(lineA.qty, 2);
+  assert.equal(cart.total, 285); // 2×100 + 50 + 35 delivery
+}
+
 console.log('✓ executor (order safety) tests passed');

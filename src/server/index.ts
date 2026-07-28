@@ -75,7 +75,18 @@ app.post('/api/chat', async (c) => {
 
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ phase: 'recipe' }) });
     try {
-      let text = await session.agent.send(message);
+      // If the user tweaked quantities with the +/- buttons, the model never saw
+      // that re-review — tell it once so it doesn't revert the edits.
+      let outgoing = message;
+      if (session.manualSkuIds) {
+        outgoing =
+          `[SYSTEM NOTE, not typed by the user: since your last reply they adjusted the cart ` +
+          `with its +/- buttons. The current reviewed cart is cart_id ${session.lastCartId ?? 'unknown'} ` +
+          `with sku_ids ${JSON.stringify(session.manualSkuIds)}. Base any further changes on this list.]\n\n` +
+          message;
+        session.manualSkuIds = undefined;
+      }
+      let text = await session.agent.send(outgoing);
       // Deterministic guard: the model may claim cart changes and point at the
       // "Place order" button without having called review_cart — in which case
       // no cart card exists in the UI and nothing was actually changed. Force
@@ -110,6 +121,39 @@ app.post('/api/chat', async (c) => {
       await stream.writeSSE({ event: 'done', data: '{}' });
     }
   });
+});
+
+/**
+ * UI quantity steppers: build a fresh AUTHORITATIVE cart snapshot from the
+ * given sku list (repeat an id for qty > 1). Prices and totals stay
+ * server-computed, so the immutable-cart safety model is untouched.
+ */
+app.post('/api/cart', async (c) => {
+  const body = await readJson<{ sessionId?: string; skuIds?: unknown }>(c);
+  if (!body?.sessionId) return c.json({ error: 'sessionId is required' }, 400);
+  const { skuIds } = body;
+  if (
+    !Array.isArray(skuIds) ||
+    skuIds.length === 0 ||
+    skuIds.length > 100 ||
+    !skuIds.every((s): s is string => typeof s === 'string' && s.length > 0)
+  ) {
+    return c.json({ error: 'skuIds must be a non-empty array of sku id strings' }, 400);
+  }
+  const session = getSession(body.sessionId);
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  if (session.busy) {
+    return c.json({ error: 'Still working on your last message — try once the reply lands.' }, 409);
+  }
+  try {
+    const res = await session.execute('review_cart', { sku_ids: skuIds });
+    const parsed = JSON.parse(res.result) as { cart?: Cart };
+    if (parsed.cart) session.manualSkuIds = skuIds;
+    return c.json(parsed);
+  } catch (err) {
+    logger.warn('manual cart review failed', err);
+    return c.json({ error: 'Could not update the cart — try asking in the chat instead.' }, 400);
+  }
 });
 
 /** The confirm gate as a UI action: tapping "Place order" arms the one-shot gate. */

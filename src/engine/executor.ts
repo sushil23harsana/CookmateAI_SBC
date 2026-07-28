@@ -154,10 +154,13 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       }
       case 'review_cart': {
         const { sku_ids } = parseOrThrow(ReviewCartInput, input, 'review_cart');
-        const items = await provider.getItems(sku_ids);
-        const found = new Set(items.map((i) => i.id));
-        const missing = sku_ids.filter((id) => !found.has(id));
-        const cart = computeCart(items, { deliveryFee, minOrderValue });
+        // Providers may dedupe ids, but a repeated id means qty > 1 — fetch
+        // unique items, then expand back to the requested multiset.
+        const items = await provider.getItems([...new Set(sku_ids)]);
+        const byId = new Map(items.map((i) => [i.id, i]));
+        const missing = sku_ids.filter((id) => !byId.has(id));
+        const expanded = sku_ids.flatMap((id) => byId.get(id) ?? []);
+        const cart = computeCart(expanded, { deliveryFee, minOrderValue });
         carts.put(cart);
         deps.onCartReviewed?.(cart);
         return JSON.stringify({ cart, missing });

@@ -8,20 +8,25 @@ import { cleanName, emojiFor } from './CartCard';
 /**
  * Collapsible cart pinned above the composer: the compact bar is always
  * visible while a cart is active; tapping it expands the full basket for
- * review. Place order works from either state.
+ * review, with +/- steppers that re-review the cart server-side so the
+ * snapshot stays authoritative. Place order works from either state.
  */
 export default function CartDock({
   cart,
   busy,
   onPlace,
+  onChangeQty,
 }: {
   cart: Cart;
   busy: boolean;
   onPlace: (cart: Cart) => Promise<void>;
+  onChangeQty: (skuId: string, qty: number) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const count = cart.lines.reduce((s, l) => s + l.qty, 0);
+  const locked = busy || placing || updating;
 
   const place = async () => {
     if (placing) return;
@@ -30,6 +35,16 @@ export default function CartDock({
       await onPlace(cart);
     } finally {
       setPlacing(false);
+    }
+  };
+
+  const step = async (skuId: string, qty: number) => {
+    if (locked) return;
+    setUpdating(true);
+    try {
+      await onChangeQty(skuId, qty);
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -48,9 +63,25 @@ export default function CartDock({
               {cart.lines.map((l) => (
                 <div key={l.id} className="line">
                   <div className="lc">{emojiFor(l.name)}</div>
-                  <div className="ln">
-                    {cleanName(l.name)}
-                    {l.qty > 1 ? <span className="lqty">×{l.qty}</span> : null}
+                  <div className="ln">{cleanName(l.name)}</div>
+                  <div className="qty">
+                    <button
+                      className="qbtn"
+                      aria-label={`One less ${cleanName(l.name)}`}
+                      disabled={locked || (cart.lines.length === 1 && l.qty === 1)}
+                      onClick={() => void step(l.id, l.qty - 1)}
+                    >
+                      −
+                    </button>
+                    <span className="qval">{l.qty}</span>
+                    <button
+                      className="qbtn"
+                      aria-label={`One more ${cleanName(l.name)}`}
+                      disabled={locked}
+                      onClick={() => void step(l.id, l.qty + 1)}
+                    >
+                      +
+                    </button>
                   </div>
                   <div className="lp">₹{l.lineTotal}</div>
                 </div>
@@ -95,11 +126,11 @@ export default function CartDock({
               strokeLinejoin="round"
             />
           </svg>
-          🧺 {count} item{count === 1 ? '' : 's'} · <strong>₹{cart.total}</strong>
+          🧺 {count} item{count === 1 ? '' : 's'} · <strong>₹{updating ? '…' : cart.total}</strong>
         </div>
         <button
           className="cartbar-btn"
-          disabled={busy || placing}
+          disabled={locked}
           onClick={(e) => {
             e.stopPropagation();
             void place();
