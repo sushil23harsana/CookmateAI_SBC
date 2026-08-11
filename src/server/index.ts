@@ -156,6 +156,42 @@ app.post('/api/cart', async (c) => {
   }
 });
 
+/**
+ * OAuth 2.1 + PKCE redirect target for the Swiggy MCP flow — the whitelisted
+ * redirect URI must answer even before access is switched on. The code→token
+ * exchange plugs in here once Swiggy issues client credentials; query values
+ * are deliberately never echoed back or logged.
+ */
+app.get('/oauth/callback', (c) => {
+  const code = c.req.query('code');
+  const denied = c.req.query('error');
+  if (denied || !code) {
+    return c.html(
+      oauthPage(
+        'Authorization was not completed',
+        'No worries — close this tab and try connecting again from CookMate.',
+      ),
+      400,
+    );
+  }
+  logger.info('swiggy oauth callback received an authorization code');
+  return c.html(
+    oauthPage(
+      'CookMate received the authorization ✅',
+      'You can close this tab — the Swiggy connection will finish inside CookMate.',
+    ),
+  );
+});
+
+function oauthPage(title: string, body: string): string {
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CookMate AI</title>
+<body style="margin:0;display:grid;place-items:center;min-height:100vh;font-family:system-ui,sans-serif;background:#fff8ef;color:#3b2f24">
+<div style="text-align:center;padding:32px;max-width:420px">
+<div style="font-size:40px">🍳</div><h1 style="font-size:20px;margin:12px 0 8px">${title}</h1>
+<p style="margin:0;color:#8a7a66">${body}</p></div></body>`;
+}
+
 /** The confirm gate as a UI action: tapping "Place order" arms the one-shot gate. */
 app.post('/api/order', async (c) => {
   const body = await readJson<{ sessionId?: string; cartId?: string }>(c);
