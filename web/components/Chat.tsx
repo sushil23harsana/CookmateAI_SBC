@@ -24,6 +24,9 @@ export default function Chat() {
   // action is always reachable even when the cart card has scrolled far up.
   const [latestCart, setLatestCart] = useState<Cart | null>(null);
   const [latestOrdered, setLatestOrdered] = useState(false);
+  // Live-provider auth: whether THIS visitor has connected their own Swiggy
+  // account. On mock the banner never shows (provider comes back as 'mock').
+  const [swiggy, setSwiggy] = useState<api.SwiggyStatus | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -83,6 +86,22 @@ export default function Chat() {
       })
       .catch(() => {});
   }, []);
+
+  // Check connection state when the session is known, and again whenever the tab
+  // regains focus — that's the moment the user returns from Swiggy's approval page.
+  const refreshSwiggy = useCallback(() => {
+    if (!sessionId) return;
+    api
+      .swiggyStatus(sessionId)
+      .then(setSwiggy)
+      .catch(() => {});
+  }, [sessionId]);
+
+  useEffect(() => {
+    refreshSwiggy();
+    window.addEventListener('focus', refreshSwiggy);
+    return () => window.removeEventListener('focus', refreshSwiggy);
+  }, [refreshSwiggy]);
 
   useEffect(() => {
     const el = streamRef.current;
@@ -244,7 +263,8 @@ export default function Chat() {
           </div>
         </div>
         <div className="status-chip">
-          <span className="dot" /> Instamart
+          <span className="dot" />{' '}
+          {swiggy?.provider === 'swiggy' ? (swiggy.connected ? 'Swiggy · connected' : 'Swiggy') : 'Instamart'}
         </div>
       </header>
 
@@ -263,6 +283,22 @@ export default function Chat() {
         })}
         <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
       </div>
+
+      {swiggy?.provider === 'swiggy' && !swiggy.connected && sessionId ? (
+        <div className="connectbar">
+          <span className="connectbar-text">
+            🔐 Link your own Swiggy account — orders go to <strong>your</strong> address and payment.
+          </span>
+          <a
+            className="connectbtn"
+            href={api.swiggyConnectUrl(sessionId)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Connect Swiggy
+          </a>
+        </div>
+      ) : null}
 
       {latestCart && !latestOrdered ? (
         <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} onChangeQty={changeQty} />

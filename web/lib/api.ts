@@ -101,6 +101,23 @@ function dispatch(raw: string, h: ChatHandlers): void {
   }
 }
 
+export interface SwiggyStatus {
+  provider: string;
+  connected: boolean;
+  expiresAt?: string;
+}
+
+/** Whether THIS session's user has connected their Swiggy account. */
+export async function swiggyStatus(sessionId: string): Promise<SwiggyStatus> {
+  const r = await fetch(`${BASE}/api/swiggy/status?sessionId=${encodeURIComponent(sessionId)}`);
+  if (!r.ok) return { provider: 'mock', connected: false };
+  return r.json();
+}
+
+/** Where the "Connect Swiggy" button sends the user (their approval, their account). */
+export const swiggyConnectUrl = (sessionId: string): string =>
+  `${BASE}/oauth/start?session=${encodeURIComponent(sessionId)}`;
+
 /** Re-review the cart server-side with a new sku list (repeat an id for qty > 1). */
 export async function updateCart(sessionId: string, skuIds: string[]): Promise<{ cart?: Cart }> {
   const r = await fetch(`${BASE}/api/cart`, {

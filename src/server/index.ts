@@ -8,7 +8,6 @@ import { logger } from '../logger.js';
 import { rateLimit } from './rateLimit.js';
 import { createSession, getSession, sessionCount, sweepExpiredSessions } from './sessions.js';
 import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
-import { swiggyTokenStatus } from '../instamart/tokenStore.js';
 import type { Cart } from '../types.js';
 
 assertRuntimeConfig();
@@ -44,8 +43,18 @@ app.post('/api/session', (c) => {
   return c.json({ sessionId: s.id });
 });
 
-/** Whether a Swiggy bearer token is loaded (never the token itself). */
-app.get('/api/swiggy/status', (c) => c.json({ provider: config.provider, ...swiggyTokenStatus() }));
+/** Whether THIS session's user has connected a Swiggy account (never the token itself). */
+app.get('/api/swiggy/status', (c) => {
+  const sessionId = c.req.query('sessionId');
+  const session = sessionId ? getSession(sessionId) : undefined;
+  return c.json({
+    provider: config.provider,
+    connected: Boolean(session?.swiggyToken),
+    expiresAt: session?.swiggyTokenExpiresAt
+      ? new Date(session.swiggyTokenExpiresAt).toISOString()
+      : undefined,
+  });
+});
 
 /** Streaming chat: live phase + cart events, then the final assistant message. */
 app.post('/api/chat', async (c) => {
@@ -161,10 +170,22 @@ app.post('/api/cart', async (c) => {
   }
 });
 
-/** Kick off the Swiggy OAuth 2.1 + PKCE flow — redirects to Swiggy's approval page. */
+/**
+ * Kick off the Swiggy OAuth 2.1 + PKCE flow for ONE web session — the state
+ * carries the session id, so the token minted at the callback belongs to the
+ * visitor who approved it, never to anyone else (and never to the operator).
+ */
 app.get('/oauth/start', async (c) => {
+  const sessionId = c.req.query('session');
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session) {
+    return c.html(
+      oauthPage('Session expired', 'Go back to CookMate, refresh the page, and tap Connect Swiggy again.'),
+      400,
+    );
+  }
   try {
-    return c.redirect(await beginAuthorization());
+    return c.redirect(await beginAuthorization(session.id));
   } catch (err) {
     logger.error('could not begin Swiggy authorization', err);
     return c.html(
@@ -193,9 +214,25 @@ app.get('/oauth/callback', async (c) => {
     );
   }
   try {
-    await completeAuthorization(code, state);
+    const { sessionId, accessToken, expiresInSec } = await completeAuthorization(code, state);
+    const session = getSession(sessionId);
+    if (!session) {
+      return c.html(
+        oauthPage(
+          'Session expired',
+          'Your CookMate session ended while you were approving — refresh the app and connect again.',
+        ),
+        400,
+      );
+    }
+    session.swiggyToken = accessToken;
+    session.swiggyTokenExpiresAt = expiresInSec ? Date.now() + expiresInSec * 1000 : undefined;
+    logger.info('swiggy account connected to session', { sessionId });
     return c.html(
-      oauthPage('Swiggy connected ✅', 'CookMate can now shop on Instamart — you can close this tab.'),
+      oauthPage(
+        'Swiggy connected ✅',
+        'CookMate can now shop on your Instamart account — you can close this tab.',
+      ),
     );
   } catch (err) {
     logger.warn('swiggy token exchange failed', {

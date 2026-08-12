@@ -673,6 +673,43 @@ body {
   margin-right: 7px;
 }
 
+/* ---------- connect-swiggy bar (live provider, per-user auth) ---------- */
+.connectbar {
+  flex: 0 0 auto;
+  margin: 0 16px;
+  padding: 10px 12px 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--card-warm);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.connectbar-text strong {
+  color: var(--ink);
+}
+.connectbtn {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--saffron-2);
+  color: #fff;
+  font-weight: 650;
+  font-size: 13.5px;
+  text-decoration: none;
+  transition:
+    transform 0.14s ease,
+    filter 0.14s ease;
+}
+.connectbtn:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
 /* ---------- collapsible cart dock ---------- */
 .cartdock {
   flex: 0 0 auto;
@@ -790,7 +827,8 @@ body {
   cursor: default;
 }
 @media (max-width: 520px) {
-  .cartdock {
+  .cartdock,
+  .connectbar {
     margin: 0 12px;
   }
 }

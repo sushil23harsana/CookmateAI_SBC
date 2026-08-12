@@ -40,6 +40,13 @@ export interface Session {
    * turn, which tells the model the current list so it doesn't revert edits.
    */
   manualSkuIds?: string[];
+  /**
+   * THIS user's Swiggy bearer token, minted when they approved the OAuth flow.
+   * Strictly per-session — orders go to the connected account's address and
+   * money, never the operator's. Dies with the session (5-day token, no refresh).
+   */
+  swiggyToken?: string;
+  swiggyTokenExpiresAt?: number;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -59,21 +66,26 @@ const PHASE: Record<string, string> = {
 export function createSession(): Session {
   evictIfFull();
   const id = randomUUID();
-  const provider: InstamartProvider =
-    config.provider === 'swiggy' ? new SwiggyInstamartProvider() : new MockInstamartProvider();
   const carts = new CartStore();
   const bus = new EventEmitter();
 
   const now = Date.now();
   const session = {
     id,
-    provider,
     carts,
     bus,
     busy: false,
     createdAt: now,
     lastSeenAt: now,
   } as Session;
+
+  // The swiggy provider reads THIS session's token on every connect, so it only
+  // ever acts as the user who approved the OAuth flow in this session.
+  const provider: InstamartProvider =
+    config.provider === 'swiggy'
+      ? new SwiggyInstamartProvider(() => session.swiggyToken ?? '')
+      : new MockInstamartProvider();
+  session.provider = provider;
 
   session.execute = createExecutor({
     provider,

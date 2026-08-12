@@ -3,7 +3,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { InstamartProvider } from './provider.js';
 import type { Sku, OrderResult, TrackResult } from '../types.js';
 import { config } from '../config.js';
-import { getSwiggyToken } from './tokenStore.js';
 import { logger } from '../logger.js';
 import { ProviderError } from '../errors.js';
 import { SkuSchema } from '../validation/schemas.js';
@@ -56,14 +55,21 @@ export class SwiggyInstamartProvider implements InstamartProvider {
   private address?: SwiggyAddress;
   private tokenInUse?: string;
 
+  /**
+   * Each web session injects its OWN user's token (minted by that user's OAuth
+   * approval), so one visitor can never shop on another's Swiggy account. The
+   * default (env token) is for the single-user CLI.
+   */
+  constructor(private readonly tokenSource: () => string = () => config.swiggyMcpToken) {}
+
   private async ensure(): Promise<Client> {
-    const token = getSwiggyToken();
+    const token = this.tokenSource();
     if (this.client && this.tokenInUse === token) return this.client;
     if (this.client) await this.close(); // token rotated via OAuth — reconnect fresh
     if (!token) {
       throw new ProviderError(
-        'No Swiggy MCP token — connect via GET /oauth/start on the API (or set SWIGGY_MCP_TOKEN). ' +
-          'Tokens last 5 days; v1 has no refresh.',
+        'This user has not connected a Swiggy account yet — ask them to tap "Connect Swiggy" ' +
+          'in the app (their approval mints a 5-day token; v1 has no refresh).',
       );
     }
     try {
