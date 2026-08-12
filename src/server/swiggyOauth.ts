@@ -63,7 +63,7 @@ async function ensureClientId(): Promise<string> {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       token_endpoint_auth_method: 'none', // public client — PKCE carries the proof
-      scope: 'mcp:tools',
+      scope: 'mcp:tools mcp:resources mcp:prompts',
     }),
   });
   if (!res.ok) throw new Error(`Swiggy client registration failed (HTTP ${res.status})`);
@@ -87,7 +87,9 @@ export async function beginAuthorization(sessionId: string): Promise<string> {
   u.searchParams.set('code_challenge', challengeFrom(verifier));
   u.searchParams.set('code_challenge_method', 'S256');
   u.searchParams.set('state', state);
-  u.searchParams.set('scope', 'mcp:tools');
+  // All three documented scopes: tool CALLS need mcp:tools, but the tool
+  // CATALOG (tools/list) is metadata — observed empty with mcp:tools alone.
+  u.searchParams.set('scope', 'mcp:tools mcp:resources mcp:prompts');
   return u.toString();
 }
 

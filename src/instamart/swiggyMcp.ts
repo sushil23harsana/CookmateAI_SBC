@@ -80,6 +80,9 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       await client.connect(transport);
       const { tools } = await client.listTools();
       this.toolNames = tools.map((t) => t.name);
+      if (this.toolNames.length === 0) {
+        logger.warn('Swiggy tool catalog came back empty — proceeding with documented v1 tool names');
+      }
       logger.info('connected to Swiggy Instamart MCP', { tools: this.toolNames });
       this.client = client;
       this.tokenInUse = token;
@@ -93,6 +96,10 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     const spec = TOOLS[key];
     const override = process.env[spec.env];
     if (override) return override;
+    // Listing and calling are separate MCP operations — when the catalog comes
+    // back empty (seen live 2026-08-12), trust the documented v1 names and let
+    // the CALL succeed or fail on its own merits instead of refusing here.
+    if (this.toolNames.length === 0) return spec.name;
     if (this.toolNames.includes(spec.name)) return spec.name;
     const found = this.toolNames.find((n) => spec.pattern.test(n));
     if (!found) {
