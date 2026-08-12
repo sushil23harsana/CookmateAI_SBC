@@ -21,6 +21,12 @@ const EnvSchema = z.object({
 
   SWIGGY_MCP_URL: z.string().url().default('https://mcp.swiggy.com/im'),
   SWIGGY_MCP_TOKEN: z.string().default(''),
+  // OAuth 2.1 + PKCE client id. Empty = self-register via Dynamic Client
+  // Registration on first use (the registered id is logged so it can be pinned).
+  SWIGGY_CLIENT_ID: z.string().default(''),
+  // Must EXACTLY match a redirect URI whitelisted by Swiggy. Empty = derived:
+  // RENDER_EXTERNAL_URL (in prod) or http://localhost:PORT, + /oauth/callback.
+  OAUTH_REDIRECT_URI: z.string().default(''),
 
   COOKMATE_DELIVERY_FEE: z.coerce.number().min(0).max(1000).default(35),
   COOKMATE_MIN_ORDER_VALUE: z.coerce.number().min(0).max(100000).default(99),
@@ -62,6 +68,11 @@ function load() {
     openaiModel: e.OPENAI_MODEL,
     swiggyMcpUrl: e.SWIGGY_MCP_URL,
     swiggyMcpToken: e.SWIGGY_MCP_TOKEN,
+    swiggyClientId: e.SWIGGY_CLIENT_ID,
+    swiggyAuthBase: new URL(e.SWIGGY_MCP_URL).origin,
+    oauthRedirectUri:
+      e.OAUTH_REDIRECT_URI ||
+      `${(process.env.RENDER_EXTERNAL_URL ?? `http://localhost:${e.PORT}`).replace(/\/+$/, '')}/oauth/callback`,
     deliveryFee: e.COOKMATE_DELIVERY_FEE,
     minOrderValue: e.COOKMATE_MIN_ORDER_VALUE,
     maxOrderValue: e.COOKMATE_MAX_ORDER_VALUE,
@@ -98,11 +109,8 @@ export function assertRuntimeConfig(): void {
       'COOKMATE_LLM=openai but OPENAI_API_KEY is empty. Set a key, or use COOKMATE_LLM=anthropic.',
     );
   }
-  if (config.provider === 'swiggy' && !config.swiggyMcpToken) {
-    throw new ConfigError(
-      'COOKMATE_PROVIDER=swiggy but SWIGGY_MCP_TOKEN is empty. Set a token, or use COOKMATE_PROVIDER=mock.',
-    );
-  }
+  // COOKMATE_PROVIDER=swiggy with no token is no longer fatal: the server mints
+  // one at runtime via GET /oauth/start, and the provider errors actionably until then.
   if (config.maxOrderValue < config.minOrderValue) {
     throw new ConfigError(
       `COOKMATE_MAX_ORDER_VALUE (₹${config.maxOrderValue}) must be >= COOKMATE_MIN_ORDER_VALUE (₹${config.minOrderValue}).`,

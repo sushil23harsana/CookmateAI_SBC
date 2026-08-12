@@ -7,6 +7,8 @@ import { config, assertRuntimeConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { rateLimit } from './rateLimit.js';
 import { createSession, getSession, sessionCount, sweepExpiredSessions } from './sessions.js';
+import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
+import { swiggyTokenStatus } from '../instamart/tokenStore.js';
 import type { Cart } from '../types.js';
 
 assertRuntimeConfig();
@@ -41,6 +43,9 @@ app.post('/api/session', (c) => {
   const s = createSession();
   return c.json({ sessionId: s.id });
 });
+
+/** Whether a Swiggy bearer token is loaded (never the token itself). */
+app.get('/api/swiggy/status', (c) => c.json({ provider: config.provider, ...swiggyTokenStatus() }));
 
 /** Streaming chat: live phase + cart events, then the final assistant message. */
 app.post('/api/chat', async (c) => {
@@ -156,16 +161,29 @@ app.post('/api/cart', async (c) => {
   }
 });
 
+/** Kick off the Swiggy OAuth 2.1 + PKCE flow — redirects to Swiggy's approval page. */
+app.get('/oauth/start', async (c) => {
+  try {
+    return c.redirect(await beginAuthorization());
+  } catch (err) {
+    logger.error('could not begin Swiggy authorization', err);
+    return c.html(
+      oauthPage('Could not reach Swiggy', 'Starting the authorization failed — try again in a minute.'),
+      502,
+    );
+  }
+});
+
 /**
- * OAuth 2.1 + PKCE redirect target for the Swiggy MCP flow — the whitelisted
- * redirect URI must answer even before access is switched on. The code→token
- * exchange plugs in here once Swiggy issues client credentials; query values
- * are deliberately never echoed back or logged.
+ * OAuth 2.1 + PKCE redirect target (whitelisted with Swiggy — must match exactly).
+ * Exchanges the single-use, 120-second code for a 5-day bearer token and hands it
+ * to the Swiggy provider. Codes and tokens are never echoed back or logged.
  */
-app.get('/oauth/callback', (c) => {
+app.get('/oauth/callback', async (c) => {
   const code = c.req.query('code');
+  const state = c.req.query('state');
   const denied = c.req.query('error');
-  if (denied || !code) {
+  if (denied || !code || !state) {
     return c.html(
       oauthPage(
         'Authorization was not completed',
@@ -174,13 +192,23 @@ app.get('/oauth/callback', (c) => {
       400,
     );
   }
-  logger.info('swiggy oauth callback received an authorization code');
-  return c.html(
-    oauthPage(
-      'CookMate received the authorization ✅',
-      'You can close this tab — the Swiggy connection will finish inside CookMate.',
-    ),
-  );
+  try {
+    await completeAuthorization(code, state);
+    return c.html(
+      oauthPage('Swiggy connected ✅', 'CookMate can now shop on Instamart — you can close this tab.'),
+    );
+  } catch (err) {
+    logger.warn('swiggy token exchange failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return c.html(
+      oauthPage(
+        'Connection could not be completed',
+        'The sign-in expired or was already used — start again from CookMate.',
+      ),
+      400,
+    );
+  }
 });
 
 function oauthPage(title: string, body: string): string {

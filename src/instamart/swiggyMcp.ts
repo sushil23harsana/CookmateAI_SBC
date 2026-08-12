@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { InstamartProvider } from './provider.js';
 import type { Sku, OrderResult, TrackResult } from '../types.js';
 import { config } from '../config.js';
+import { getSwiggyToken } from './tokenStore.js';
 import { logger } from '../logger.js';
 import { ProviderError } from '../errors.js';
 import { SkuSchema } from '../validation/schemas.js';
@@ -53,18 +54,21 @@ export class SwiggyInstamartProvider implements InstamartProvider {
   private client?: Client;
   private toolNames: string[] = [];
   private address?: SwiggyAddress;
+  private tokenInUse?: string;
 
   private async ensure(): Promise<Client> {
-    if (this.client) return this.client;
-    if (!config.swiggyMcpToken) {
+    const token = getSwiggyToken();
+    if (this.client && this.tokenInUse === token) return this.client;
+    if (this.client) await this.close(); // token rotated via OAuth — reconnect fresh
+    if (!token) {
       throw new ProviderError(
-        'SWIGGY_MCP_TOKEN is empty — complete the OAuth 2.1 + PKCE flow and set the bearer token ' +
-          '(tokens last 5 days; v1 has no refresh).',
+        'No Swiggy MCP token — connect via GET /oauth/start on the API (or set SWIGGY_MCP_TOKEN). ' +
+          'Tokens last 5 days; v1 has no refresh.',
       );
     }
     try {
       const transport = new StreamableHTTPClientTransport(new URL(config.swiggyMcpUrl), {
-        requestInit: { headers: { Authorization: `Bearer ${config.swiggyMcpToken}` } },
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
       });
       const client = new Client({ name: 'cookmate-ai', version: '0.1.0' }, { capabilities: {} });
       await client.connect(transport);
@@ -72,6 +76,7 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       this.toolNames = tools.map((t) => t.name);
       logger.info('connected to Swiggy Instamart MCP', { tools: this.toolNames });
       this.client = client;
+      this.tokenInUse = token;
       return client;
     } catch (err) {
       throw new ProviderError(`Failed to connect to Swiggy MCP: ${msg(err)}`, true);
