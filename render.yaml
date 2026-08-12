@@ -19,7 +19,7 @@ services:
       - key: TRUST_PROXY
         value: 'true' # Render fronts the service with a proxy
       - key: COOKMATE_PROVIDER
-        value: mock # flip to swiggy once users should shop the real catalog
+        sync: false # dashboard-controlled (mock or swiggy) — a repo push must never flip it
       - key: SWIGGY_CLIENT_ID
         sync: false # OAuth client id issued by Swiggy's gateway (DCR logs it)
       - key: DATABASE_URL
