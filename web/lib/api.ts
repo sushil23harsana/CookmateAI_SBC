@@ -137,6 +137,30 @@ export async function swiggyStatus(sessionId: string): Promise<SwiggyStatus> {
 export const swiggyConnectUrl = (sessionId: string): string =>
   `${BASE}/oauth/start?session=${encodeURIComponent(sessionId)}`;
 
+export interface SwiggyAddress {
+  id: string;
+  label: string;
+}
+
+/** The connected user's saved Swiggy addresses + which one this session delivers to. */
+export async function swiggyAddresses(
+  sessionId: string,
+): Promise<{ addresses: SwiggyAddress[]; selected?: string }> {
+  const r = await fetch(`${BASE}/api/swiggy/addresses?sessionId=${encodeURIComponent(sessionId)}`);
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
+}
+
+/** Pin the delivery address — availability and prices follow it. */
+export async function setSwiggyAddress(sessionId: string, addressId: string): Promise<void> {
+  const r = await fetch(`${BASE}/api/swiggy/address`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, addressId }),
+  });
+  if (!r.ok) throw await errorFrom(r);
+}
+
 /** Re-review the cart server-side with a new sku list (repeat an id for qty > 1). */
 export async function updateCart(sessionId: string, skuIds: string[]): Promise<{ cart?: Cart }> {
   const r = await fetch(`${BASE}/api/cart`, {

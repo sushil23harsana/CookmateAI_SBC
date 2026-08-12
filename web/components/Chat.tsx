@@ -27,6 +27,10 @@ export default function Chat() {
   // Live-provider auth: whether THIS visitor has connected their own Swiggy
   // account. On mock the banner never shows (provider comes back as 'mock').
   const [swiggy, setSwiggy] = useState<api.SwiggyStatus | null>(null);
+  // Their saved Swiggy addresses — availability and prices follow the pick.
+  const [addresses, setAddresses] = useState<api.SwiggyAddress[]>([]);
+  const [addressId, setAddressId] = useState<string | undefined>(undefined);
+  const [addressNote, setAddressNote] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -116,6 +120,35 @@ export default function Chat() {
     window.addEventListener('focus', refreshSwiggy);
     return () => window.removeEventListener('focus', refreshSwiggy);
   }, [refreshSwiggy]);
+
+  // Once connected, load the saved addresses so the user SEES and controls
+  // where orders would deliver (the server defaults to their first address).
+  useEffect(() => {
+    if (!sessionId || swiggy?.provider !== 'swiggy' || !swiggy.connected) return;
+    api
+      .swiggyAddresses(sessionId)
+      .then(({ addresses: list, selected }) => {
+        setAddresses(list);
+        setAddressId(selected);
+        setAddressNote(
+          list.length === 0
+            ? 'No delivery address on your Swiggy account yet — add one in the Swiggy app, then refresh.'
+            : null,
+        );
+      })
+      .catch(() => setAddressNote('Could not load your Swiggy addresses — refresh to retry.'));
+  }, [sessionId, swiggy]);
+
+  const pickAddress = async (id: string) => {
+    if (!sessionId) return;
+    const prev = addressId;
+    setAddressId(id); // optimistic — the dropdown should feel instant
+    try {
+      await api.setSwiggyAddress(sessionId, id);
+    } catch {
+      setAddressId(prev);
+    }
+  };
 
   useEffect(() => {
     const el = streamRef.current;
@@ -312,6 +345,30 @@ export default function Chat() {
             Connect Swiggy
           </a>
         </div>
+      ) : null}
+
+      {swiggy?.provider === 'swiggy' && swiggy.connected ? (
+        addresses.length > 0 ? (
+          <div className="connectbar">
+            <span className="connectbar-text">📍 Deliver to</span>
+            <select
+              className="addrselect"
+              value={addressId ?? ''}
+              onChange={(e) => void pickAddress(e.target.value)}
+              aria-label="Delivery address"
+            >
+              {addresses.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : addressNote ? (
+          <div className="connectbar">
+            <span className="connectbar-text">📍 {addressNote}</span>
+          </div>
+        ) : null
       ) : null}
 
       {latestCart && !latestOrdered ? (

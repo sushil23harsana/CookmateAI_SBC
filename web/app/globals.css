@@ -709,6 +709,19 @@ body {
   filter: brightness(1.06);
   transform: translateY(-1px);
 }
+.addrselect {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 320px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+}
 
 /* ---------- collapsible cart dock ---------- */
 .cartdock {

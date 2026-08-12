@@ -9,6 +9,7 @@ import { rateLimit } from './rateLimit.js';
 import { createSession, getSession, sessionCount, sweepExpiredSessions } from './sessions.js';
 import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
 import { loadToken, saveToken } from './tokenRepo.js';
+import { SwiggyInstamartProvider } from '../instamart/swiggyMcp.js';
 import type { Cart } from '../types.js';
 
 assertRuntimeConfig();
@@ -70,6 +71,42 @@ app.get('/api/swiggy/status', (c) => {
       ? new Date(session.swiggyTokenExpiresAt).toISOString()
       : undefined,
   });
+});
+
+/**
+ * The connected user's saved Swiggy addresses (id + short label only) — shown
+ * as a picker because availability and prices depend on the delivery address.
+ * Defaults the session's pick to the first address so shopping works instantly.
+ */
+app.get('/api/swiggy/addresses', async (c) => {
+  const sessionId = c.req.query('sessionId');
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  if (!(session.provider instanceof SwiggyInstamartProvider) || !session.swiggyToken) {
+    return c.json({ addresses: [], selected: undefined });
+  }
+  try {
+    const addresses = await session.provider.listAddresses();
+    if (!session.swiggyAddressId && addresses[0]) session.swiggyAddressId = addresses[0].id;
+    return c.json({ addresses, selected: session.swiggyAddressId });
+  } catch (err) {
+    logger.warn('listing Swiggy addresses failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Could not load your Swiggy addresses — try again in a moment.' }, 502);
+  }
+});
+
+/** Pin which saved address this session delivers to. */
+app.post('/api/swiggy/address', async (c) => {
+  const body = await readJson<{ sessionId?: string; addressId?: unknown }>(c);
+  if (!body?.sessionId || typeof body.addressId !== 'string' || !body.addressId) {
+    return c.json({ error: 'sessionId and addressId are required' }, 400);
+  }
+  const session = getSession(body.sessionId);
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  session.swiggyAddressId = body.addressId;
+  return c.json({ ok: true, selected: session.swiggyAddressId });
 });
 
 /** Streaming chat: live phase + cart events, then the final assistant message. */

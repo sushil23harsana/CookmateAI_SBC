@@ -53,6 +53,8 @@ export interface Session {
    */
   swiggyToken?: string;
   swiggyTokenExpiresAt?: number;
+  /** The saved Swiggy address the user picked — availability and prices follow it. */
+  swiggyAddressId?: string;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -90,7 +92,10 @@ export function createSession(userId?: string): Session {
   // ever acts as the user who approved the OAuth flow in this session.
   const provider: InstamartProvider =
     config.provider === 'swiggy'
-      ? new SwiggyInstamartProvider(() => session.swiggyToken ?? '')
+      ? new SwiggyInstamartProvider(
+          () => session.swiggyToken ?? '',
+          () => session.swiggyAddressId,
+        )
       : new MockInstamartProvider();
   session.provider = provider;
 

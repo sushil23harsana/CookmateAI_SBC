@@ -58,9 +58,14 @@ export class SwiggyInstamartProvider implements InstamartProvider {
   /**
    * Each web session injects its OWN user's token (minted by that user's OAuth
    * approval), so one visitor can never shop on another's Swiggy account. The
-   * default (env token) is for the single-user CLI.
+   * default (env token) is for the single-user CLI. addressSource lets the
+   * session pin WHICH saved Swiggy address to shop against — availability and
+   * prices are address-dependent; without it the first saved address is used.
    */
-  constructor(private readonly tokenSource: () => string = () => config.swiggyMcpToken) {}
+  constructor(
+    private readonly tokenSource: () => string = () => config.swiggyMcpToken,
+    private readonly addressSource?: () => string | undefined,
+  ) {}
 
   private async ensure(): Promise<Client> {
     const token = this.tokenSource();
@@ -150,13 +155,33 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     }
   }
 
-  /** Resolve and cache the delivery address — search and checkout both require it. */
-  private async resolveAddress(): Promise<SwiggyAddress> {
-    if (this.address) return this.address;
+  /** The user's saved Swiggy addresses, PII-light: id + a short label for a picker. */
+  async listAddresses(): Promise<Array<{ id: string; label: string }>> {
     const data = asRecord(await this.call(this.resolve('addresses'), {}, 2));
-    const list = firstArray(data, ['addresses', 'items', 'results']);
-    const first = list[0] as Record<string, unknown> | undefined;
-    const id = str(first?.id ?? first?.addressId ?? first?.address_id);
+    const list = firstArray(data, ['addresses', 'items', 'results']) as Array<Record<string, unknown>>;
+    return list
+      .map((a) => ({
+        id: str(a.id ?? a.addressId ?? a.address_id) ?? '',
+        label:
+          [str(a.annotation ?? a.label ?? a.tag ?? a.name), str(a.area ?? a.locality ?? a.city)]
+            .filter(Boolean)
+            .join(' · ') || 'Saved address',
+      }))
+      .filter((a) => a.id);
+  }
+
+  /**
+   * Resolve and cache the delivery address — search and checkout both require it.
+   * Honors the session's picked address; a change invalidates the cache so the
+   * very next call shops against the new location.
+   */
+  private async resolveAddress(): Promise<SwiggyAddress> {
+    const chosen = this.addressSource?.();
+    if (this.address && (!chosen || this.address.id === chosen)) return this.address;
+    const data = asRecord(await this.call(this.resolve('addresses'), {}, 2));
+    const list = firstArray(data, ['addresses', 'items', 'results']) as Array<Record<string, unknown>>;
+    const pick = (chosen && list.find((a) => str(a.id ?? a.addressId ?? a.address_id) === chosen)) || list[0];
+    const id = str(pick?.id ?? pick?.addressId ?? pick?.address_id);
     if (!id) {
       throw new ProviderError(
         'No saved delivery address on this Swiggy account — add one in the Swiggy app ' +
@@ -165,8 +190,8 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     }
     this.address = {
       id,
-      lat: num(first?.lat ?? first?.latitude),
-      lng: num(first?.lng ?? first?.longitude),
+      lat: num(pick?.lat ?? pick?.latitude),
+      lng: num(pick?.lng ?? pick?.longitude),
     };
     logger.info('using Swiggy delivery address', { addressId: this.address.id });
     return this.address;
