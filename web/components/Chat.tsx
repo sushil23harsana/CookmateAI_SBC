@@ -93,7 +93,21 @@ export default function Chat() {
     if (!sessionId) return;
     api
       .swiggyStatus(sessionId)
-      .then(setSwiggy)
+      .then((st) => {
+        if (!st.known) {
+          // The saved session died with a server restart — mint a fresh one;
+          // the durable user id restores any persisted Swiggy connection.
+          api
+            .createSession()
+            .then((id) => {
+              localStorage.setItem('cookmate_session', id);
+              setSessionId(id);
+            })
+            .catch(() => {});
+          return;
+        }
+        setSwiggy(st);
+      })
       .catch(() => {});
   }, [sessionId]);
 

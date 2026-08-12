@@ -23,8 +23,25 @@ async function errorFrom(res: Response): Promise<ApiError> {
   return new ApiError(msg, res.status);
 }
 
+/**
+ * The browser's anonymous durable id (random uuid, no PII). Keys the server-side
+ * persisted Swiggy connection, so returning users don't have to reconnect.
+ */
+export function durableUserId(): string {
+  let u = localStorage.getItem('cookmate_user');
+  if (!u) {
+    u = crypto.randomUUID();
+    localStorage.setItem('cookmate_user', u);
+  }
+  return u;
+}
+
 export async function createSession(): Promise<string> {
-  const r = await fetch(`${BASE}/api/session`, { method: 'POST' });
+  const r = await fetch(`${BASE}/api/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId: durableUserId() }),
+  });
   if (!r.ok) throw new Error('Could not start a session');
   const { sessionId } = (await r.json()) as { sessionId: string };
   return sessionId;
@@ -103,6 +120,8 @@ function dispatch(raw: string, h: ChatHandlers): void {
 
 export interface SwiggyStatus {
   provider: string;
+  /** False when the session id is unknown to the server (restart / TTL). */
+  known: boolean;
   connected: boolean;
   expiresAt?: string;
 }
@@ -110,7 +129,7 @@ export interface SwiggyStatus {
 /** Whether THIS session's user has connected their Swiggy account. */
 export async function swiggyStatus(sessionId: string): Promise<SwiggyStatus> {
   const r = await fetch(`${BASE}/api/swiggy/status?sessionId=${encodeURIComponent(sessionId)}`);
-  if (!r.ok) return { provider: 'mock', connected: false };
+  if (!r.ok) return { provider: 'mock', known: true, connected: false };
   return r.json();
 }
 

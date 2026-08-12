@@ -19,6 +19,12 @@ import type { Cart } from '../types.js';
  */
 export interface Session {
   id: string;
+  /**
+   * Anonymous durable id from the browser (random uuid in localStorage — no
+   * PII). Keys the persisted Swiggy token, so a returning user is still
+   * connected after this in-memory session is long gone.
+   */
+  userId?: string;
   provider: InstamartProvider;
   carts: CartStore;
   execute: Executor;
@@ -63,7 +69,7 @@ const PHASE: Record<string, string> = {
   track_order: 'tracking',
 };
 
-export function createSession(): Session {
+export function createSession(userId?: string): Session {
   evictIfFull();
   const id = randomUUID();
   const carts = new CartStore();
@@ -72,6 +78,7 @@ export function createSession(): Session {
   const now = Date.now();
   const session = {
     id,
+    userId,
     carts,
     bus,
     busy: false,

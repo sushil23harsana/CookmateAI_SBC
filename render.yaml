@@ -19,4 +19,8 @@ services:
       - key: TRUST_PROXY
         value: 'true' # Render fronts the service with a proxy
       - key: COOKMATE_PROVIDER
-        value: mock # flip to swiggy + SWIGGY_MCP_TOKEN once access is granted
+        value: mock # flip to swiggy once users should shop the real catalog
+      - key: SWIGGY_CLIENT_ID
+        sync: false # OAuth client id issued by Swiggy's gateway (DCR logs it)
+      - key: DATABASE_URL
+        sync: false # optional Neon Postgres — durable per-user Swiggy connections

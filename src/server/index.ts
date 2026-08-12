@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 import { rateLimit } from './rateLimit.js';
 import { createSession, getSession, sessionCount, sweepExpiredSessions } from './sessions.js';
 import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
+import { loadToken, saveToken } from './tokenRepo.js';
 import type { Cart } from '../types.js';
 
 assertRuntimeConfig();
@@ -38,8 +39,20 @@ app.get('/api/health', (c) =>
 // Per-IP rate limit on everything below (the endpoints that cost money/CPU).
 app.use('/api/*', rateLimit({ limit: config.rateLimitPerMin, trustProxy: config.trustProxy }));
 
-app.post('/api/session', (c) => {
-  const s = createSession();
+app.post('/api/session', async (c) => {
+  const body = await readJson<{ userId?: unknown }>(c);
+  // Anonymous durable id from the browser — shape-checked, never trusted further.
+  const userId =
+    typeof body?.userId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.userId) ? body.userId : undefined;
+  const s = createSession(userId);
+  // Returning user: restore their persisted Swiggy connection onto the new session.
+  if (userId) {
+    const saved = await loadToken(userId);
+    if (saved) {
+      s.swiggyToken = saved.token;
+      s.swiggyTokenExpiresAt = saved.expiresAt;
+    }
+  }
   return c.json({ sessionId: s.id });
 });
 
@@ -49,6 +62,9 @@ app.get('/api/swiggy/status', (c) => {
   const session = sessionId ? getSession(sessionId) : undefined;
   return c.json({
     provider: config.provider,
+    // known=false tells the client its saved session died (restart/TTL) — it
+    // then mints a fresh one, which restores any persisted connection.
+    known: Boolean(session),
     connected: Boolean(session?.swiggyToken),
     expiresAt: session?.swiggyTokenExpiresAt
       ? new Date(session.swiggyTokenExpiresAt).toISOString()
@@ -227,6 +243,8 @@ app.get('/oauth/callback', async (c) => {
     }
     session.swiggyToken = accessToken;
     session.swiggyTokenExpiresAt = expiresInSec ? Date.now() + expiresInSec * 1000 : undefined;
+    // Fire-and-forget: persistence must never block or fail the connect flow.
+    if (session.userId) void saveToken(session.userId, accessToken, session.swiggyTokenExpiresAt);
     logger.info('swiggy account connected to session', { sessionId });
     return c.html(
       oauthPage(

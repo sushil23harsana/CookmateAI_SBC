@@ -27,6 +27,9 @@ const EnvSchema = z.object({
   // Must EXACTLY match a redirect URI whitelisted by Swiggy. Empty = derived:
   // RENDER_EXTERNAL_URL (in prod) or http://localhost:PORT, + /oauth/callback.
   OAUTH_REDIRECT_URI: z.string().default(''),
+  // Optional Postgres (Neon) for durable per-user state (Swiggy tokens). Empty =
+  // in-memory only: everything works, connections just die with the session.
+  DATABASE_URL: z.string().default(''),
 
   COOKMATE_DELIVERY_FEE: z.coerce.number().min(0).max(1000).default(35),
   COOKMATE_MIN_ORDER_VALUE: z.coerce.number().min(0).max(100000).default(99),
@@ -73,6 +76,7 @@ function load() {
     oauthRedirectUri:
       e.OAUTH_REDIRECT_URI ||
       `${(process.env.RENDER_EXTERNAL_URL ?? `http://localhost:${e.PORT}`).replace(/\/+$/, '')}/oauth/callback`,
+    databaseUrl: e.DATABASE_URL,
     deliveryFee: e.COOKMATE_DELIVERY_FEE,
     minOrderValue: e.COOKMATE_MIN_ORDER_VALUE,
     maxOrderValue: e.COOKMATE_MAX_ORDER_VALUE,
