@@ -221,7 +221,16 @@ export class SwiggyInstamartProvider implements InstamartProvider {
   async searchItems(query: string, maxResults: number): Promise<Sku[]> {
     const address = await this.resolveAddress();
     const data = await this.call(this.resolve('search'), { addressId: address.id, query }, 2);
-    return normalizeCatalog(data).slice(0, maxResults);
+    const skus = normalizeCatalog(data).slice(0, maxResults);
+    if (skus.length === 0) {
+      // Product data is not PII — sketch the shape so field mismatches show in logs.
+      logger.warn('search_products returned no parseable products', {
+        query,
+        shape: shapeOf(data),
+        head: typeof data === 'string' ? data.slice(0, 60) : undefined,
+      });
+    }
+    return skus;
   }
 
   /**
@@ -237,6 +246,12 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     );
     const cart = await this.call(this.resolve('getCart'), {}, 2);
     const skus = normalizeCatalog(cart);
+    if (skus.length === 0 && ids.length > 0) {
+      logger.warn('get_cart returned no parseable items', {
+        shape: shapeOf(cart),
+        head: typeof cart === 'string' ? cart.slice(0, 60) : undefined,
+      });
+    }
     logger.info('swiggy cart priced', { requested: new Set(ids).size, priced: skus.length });
     return skus;
   }
@@ -362,8 +377,7 @@ function unwrapParsed(tool: string, parsed: unknown): unknown {
  * so variants are flattened into individual SKUs.
  */
 function normalizeCatalog(data: unknown): Sku[] {
-  const root = asRecord(data);
-  const arr = Array.isArray(data) ? data : firstArray(root, ['products', 'items', 'results']);
+  const arr = findRecordArray(data, ['products', 'items', 'results', 'data']);
   const out: Sku[] = [];
   for (const o of arr as Array<Record<string, unknown>>) {
     const variants = Array.isArray(o.variants) ? (o.variants as Array<Record<string, unknown>>) : [o];
@@ -455,19 +469,23 @@ function idOf(a: Record<string, unknown> | undefined): string | undefined {
  * so walk the response and take the first array of records — preferring named keys at
  * any depth so a stray secondary array can't win.
  */
-function findRecordArray(data: unknown, depth = 4): Array<Record<string, unknown>> {
+function findRecordArray(
+  data: unknown,
+  keys: string[] = ['addresses', 'items', 'results', 'data'],
+  depth = 4,
+): Array<Record<string, unknown>> {
   if (Array.isArray(data)) {
     const recs = data.filter((x) => x && typeof x === 'object' && !Array.isArray(x));
     return recs as Array<Record<string, unknown>>;
   }
   if (!data || typeof data !== 'object' || depth === 0) return [];
   const o = data as Record<string, unknown>;
-  for (const k of ['addresses', 'items', 'results', 'data']) {
-    const hit = findRecordArray(o[k], depth - 1);
+  for (const k of keys) {
+    const hit = findRecordArray(o[k], keys, depth - 1);
     if (hit.length > 0) return hit;
   }
   for (const v of Object.values(o)) {
-    const hit = findRecordArray(v, depth - 1);
+    const hit = findRecordArray(v, keys, depth - 1);
     if (hit.length > 0) return hit;
   }
   return [];
