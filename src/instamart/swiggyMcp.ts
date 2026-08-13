@@ -135,6 +135,12 @@ export class SwiggyInstamartProvider implements InstamartProvider {
           .join('\n');
         if (res.isError) throw new ProviderError(`Swiggy tool ${name} returned an error: ${text}`, true);
         logger.debug('swiggy tool ok', { tool: name, ms: Date.now() - started });
+        // Some tools answer via structuredContent with no text blocks — reading only
+        // text would silently turn a full response into an empty one.
+        const structured = (res as { structuredContent?: unknown }).structuredContent;
+        if (!text && structured !== undefined) {
+          return unwrapParsed(name, structured);
+        }
         return unwrapEnvelope(name, text);
       } catch (err) {
         const retryable = err instanceof ProviderError ? err.retryable : true;
@@ -182,7 +188,14 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     const raw = await this.call(this.resolve('addresses'), {}, 2);
     const list = findRecordArray(raw);
     if (list.length === 0) {
-      logger.warn('get_addresses returned no parseable addresses', { shape: shapeOf(raw) });
+      // Pagination counts are not PII and settle the key question: does Swiggy
+      // itself say this account has 0 addresses, or did we fail to parse them?
+      const pagination = asRecord(asRecord(raw).pagination);
+      logger.warn('get_addresses returned no parseable addresses', {
+        shape: shapeOf(raw),
+        total: pagination.total,
+        totalPages: pagination.totalPages,
+      });
     }
     return list;
   }
@@ -314,6 +327,10 @@ function unwrapEnvelope(tool: string, text: string): unknown {
   } catch {
     return text; // not JSON — let the caller's normalizer decide
   }
+  return unwrapParsed(tool, parsed);
+}
+
+function unwrapParsed(tool: string, parsed: unknown): unknown {
   if (parsed && typeof parsed === 'object' && 'success' in parsed) {
     const env = parsed as { success: boolean; data?: unknown; error?: { message?: string } };
     if (!env.success) {
