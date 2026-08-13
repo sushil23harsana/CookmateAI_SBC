@@ -384,12 +384,23 @@ function normalizeCatalog(data: unknown): Sku[] {
     const variantList = o.variations ?? o.variants;
     const variants = Array.isArray(variantList) ? (variantList as Array<Record<string, unknown>>) : [o];
     for (const v of variants) {
+      // Field names differ per tool (live 2026-08-13): search variations use
+      // displayName/quantityDescription/price{offerPrice,mrp}; cart items use
+      // itemName/itemVariant/discountedFinalPrice/mrp.
       const candidate = {
         id: v.spinId ?? v.spin_id ?? v.id ?? o.spinId ?? o.id ?? o.itemId ?? o.productId,
-        name: v.displayName ?? v.name ?? o.displayName ?? o.name ?? o.title,
+        name: v.displayName ?? v.name ?? v.itemName ?? o.displayName ?? o.name ?? o.title,
         brand: v.brandName ?? v.brand ?? o.brand ?? o.brandName,
-        price: priceOf(v.price ?? v.finalPrice ?? v.sellingPrice ?? v.offerPrice ?? v.mrp ?? o.price),
-        packSize: v.quantityDescription ?? v.packSize ?? v.quantity ?? v.weight ?? v.unit ?? o.packSize,
+        price: priceOf(
+          v.price ??
+            v.discountedFinalPrice ??
+            v.finalPrice ??
+            v.sellingPrice ??
+            v.offerPrice ??
+            v.mrp ??
+            o.price,
+        ),
+        packSize: v.quantityDescription ?? v.itemVariant ?? v.packSize ?? v.weight ?? v.unit ?? o.packSize,
         inStock: v.isInStockAndAvailable ?? v.inStock ?? v.available ?? o.inStock ?? true,
       };
       const r = SkuSchema.safeParse(candidate);
