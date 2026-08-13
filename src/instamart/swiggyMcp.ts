@@ -320,7 +320,13 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     try {
       // Checkout is NOT idempotent — NEVER retried.
       const data = asRecord(await this.call(this.resolve('checkout'), args, 0));
-      return toOrder(data, total, idempotencyKey);
+      const order = toOrder(data, total, idempotencyKey);
+      if (order.pendingPayment && !order.upiIntentUrl) {
+        // Payment can't be completed without the link — sketch the response
+        // (key names and types only) so logs reveal where Swiggy put it.
+        logger.warn('UPI checkout returned no payment link', { shape: shapeOf(data) });
+      }
+      return order;
     } catch (err) {
       // Documented check-then-retry: checkout is not idempotent, so on failure verify
       // whether the order actually went through before surfacing an error.
@@ -537,7 +543,19 @@ function toOrder(data: Record<string, unknown>, total: number, idempotencyKey: s
       ? {
           pendingPayment,
           paasId: str(data.paasId),
-          upiIntentUrl: str(data.upiIntentUrl),
+          // The QR flow may carry the payable link under a different key than
+          // the intent flow (docs only show the intent example) — try them all.
+          upiIntentUrl: str(
+            data.upiIntentUrl ??
+              data.upiIntentURL ??
+              data.intentUrl ??
+              data.upiUrl ??
+              data.upiLink ??
+              data.qrData ??
+              data.qrCode ??
+              data.upiQr ??
+              data.paymentLink,
+          ),
           pollingIntervalInMs: num(data.pollingIntervalInMs) ?? 5000,
           maxTimeToPollForInMs: num(data.maxTimeToPollForInMs) ?? 300000,
         }

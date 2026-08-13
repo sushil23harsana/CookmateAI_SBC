@@ -163,22 +163,26 @@ export default function PaymentFlow({
         {stage.kind === 'pending' ? (
           <>
             <div className="paysheet-title">Waiting for your payment</div>
-            {stage.qr ? (
-              qrDataUrl ? (
-                // Locally generated data URI of Swiggy's UPI link — nothing external.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img className="paysheet-qr" src={qrDataUrl} alt="UPI payment QR code" />
-              ) : (
-                <div className="paysheet-sub">Open your UPI app and pay ₹{cart.total}.</div>
-              )
+            {qrDataUrl ? (
+              // Locally generated data URI of Swiggy's UPI link — nothing external.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="paysheet-qr" src={qrDataUrl} alt="UPI payment QR code" />
             ) : stage.order.upiIntentUrl ? (
               <a className="paybtn paybtn-primary" href={stage.order.upiIntentUrl}>
                 Open your UPI app to pay ₹{cart.total}
               </a>
-            ) : null}
+            ) : (
+              <div className="paysheet-sub">
+                Swiggy didn’t send a payment link — open the Swiggy app to finish paying, or close this and
+                try another method.
+              </div>
+            )}
             <div className="paysheet-sub">
               Approve the payment in your UPI app — this updates by itself once Swiggy confirms.
             </div>
+            <button className="paysheet-cancel" onClick={onClose}>
+              Close — I’ll finish this in the Swiggy app
+            </button>
           </>
         ) : null}
 
