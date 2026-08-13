@@ -30,6 +30,7 @@ export interface OrderResult {
   pendingPayment?: boolean;
   paasId?: string;
   upiIntentUrl?: string;
+  bridgeUrl?: string;
   pollingIntervalInMs?: number;
   maxTimeToPollForInMs?: number;
 }

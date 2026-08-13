@@ -77,6 +77,8 @@ export interface OrderResult {
   paasId?: string;
   /** UPI: deep link the user opens (mobile) or renders as a QR (desktop). */
   upiIntentUrl?: string;
+  /** UPI: Swiggy's hosted payment page — the QR flow returns ONLY this (live 2026-08-13). */
+  bridgeUrl?: string;
   pollingIntervalInMs?: number;
   maxTimeToPollForInMs?: number;
 }

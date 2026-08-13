@@ -321,8 +321,8 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       // Checkout is NOT idempotent — NEVER retried.
       const data = asRecord(await this.call(this.resolve('checkout'), args, 0));
       const order = toOrder(data, total, idempotencyKey);
-      if (order.pendingPayment && !order.upiIntentUrl) {
-        // Payment can't be completed without the link — sketch the response
+      if (order.pendingPayment && !order.upiIntentUrl && !order.bridgeUrl) {
+        // Payment can't be completed without a link — sketch the response
         // (key names and types only) so logs reveal where Swiggy put it.
         logger.warn('UPI checkout returned no payment link', { shape: shapeOf(data) });
       }
@@ -556,6 +556,7 @@ function toOrder(data: Record<string, unknown>, total: number, idempotencyKey: s
               data.upiQr ??
               data.paymentLink,
           ),
+          bridgeUrl: str(data.bridgeUrl),
           pollingIntervalInMs: num(data.pollingIntervalInMs) ?? 5000,
           maxTimeToPollForInMs: num(data.maxTimeToPollForInMs) ?? 300000,
         }

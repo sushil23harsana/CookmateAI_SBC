@@ -171,6 +171,16 @@ export default function PaymentFlow({
               <a className="paybtn paybtn-primary" href={stage.order.upiIntentUrl}>
                 Open your UPI app to pay ₹{cart.total}
               </a>
+            ) : stage.order.bridgeUrl ? (
+              // The QR flow returns Swiggy's own hosted payment page — open it beside us.
+              <a
+                className="paybtn paybtn-primary"
+                href={stage.order.bridgeUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Swiggy’s payment page · ₹{cart.total}
+              </a>
             ) : (
               <div className="paysheet-sub">
                 Swiggy didn’t send a payment link — open the Swiggy app to finish paying, or close this and
