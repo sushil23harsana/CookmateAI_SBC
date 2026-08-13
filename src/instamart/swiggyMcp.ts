@@ -157,17 +157,34 @@ export class SwiggyInstamartProvider implements InstamartProvider {
 
   /** The user's saved Swiggy addresses, PII-light: id + a short label for a picker. */
   async listAddresses(): Promise<Array<{ id: string; label: string }>> {
-    const data = asRecord(await this.call(this.resolve('addresses'), {}, 2));
-    const list = firstArray(data, ['addresses', 'items', 'results']) as Array<Record<string, unknown>>;
+    const list = await this.fetchAddresses();
     return list
       .map((a) => ({
-        id: str(a.id ?? a.addressId ?? a.address_id) ?? '',
+        id: idOf(a) ?? '',
         label:
-          [str(a.annotation ?? a.label ?? a.tag ?? a.name), str(a.area ?? a.locality ?? a.city)]
+          [
+            str(a.annotation ?? a.label ?? a.tag ?? a.name),
+            str(a.area ?? a.locality ?? a.city ?? a.address ?? a.address_line1 ?? a.addressLine1),
+          ]
             .filter(Boolean)
-            .join(' · ') || 'Saved address',
+            .join(' · ')
+            .slice(0, 60) || 'Saved address',
       }))
       .filter((a) => a.id);
+  }
+
+  /**
+   * get_addresses with shape-tolerant extraction. When nothing parses, log a
+   * PII-safe structural sketch — the docs don't pin the response shape, and
+   * this is the only way to see what production actually returned.
+   */
+  private async fetchAddresses(): Promise<Array<Record<string, unknown>>> {
+    const raw = await this.call(this.resolve('addresses'), {}, 2);
+    const list = findRecordArray(raw);
+    if (list.length === 0) {
+      logger.warn('get_addresses returned no parseable addresses', { shape: shapeOf(raw) });
+    }
+    return list;
   }
 
   /**
@@ -178,10 +195,9 @@ export class SwiggyInstamartProvider implements InstamartProvider {
   private async resolveAddress(): Promise<SwiggyAddress> {
     const chosen = this.addressSource?.();
     if (this.address && (!chosen || this.address.id === chosen)) return this.address;
-    const data = asRecord(await this.call(this.resolve('addresses'), {}, 2));
-    const list = firstArray(data, ['addresses', 'items', 'results']) as Array<Record<string, unknown>>;
-    const pick = (chosen && list.find((a) => str(a.id ?? a.addressId ?? a.address_id) === chosen)) || list[0];
-    const id = str(pick?.id ?? pick?.addressId ?? pick?.address_id);
+    const list = await this.fetchAddresses();
+    const pick = (chosen && list.find((a) => idOf(a) === chosen)) || list[0];
+    const id = idOf(pick);
     if (!id) {
       throw new ProviderError(
         'No saved delivery address on this Swiggy account — add one in the Swiggy app ' +
@@ -190,8 +206,8 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     }
     this.address = {
       id,
-      lat: num(pick?.lat ?? pick?.latitude),
-      lng: num(pick?.lng ?? pick?.longitude),
+      lat: numish(pick?.lat ?? pick?.latitude),
+      lng: numish(pick?.lng ?? pick?.longitude),
     };
     logger.info('using Swiggy delivery address', { addressId: this.address.id });
     return this.address;
@@ -359,6 +375,54 @@ function firstArray(o: Record<string, unknown>, keys: string[]): unknown[] {
   for (const k of keys) if (Array.isArray(o[k])) return o[k] as unknown[];
   return [];
 }
+
+/** Address ids arrive as strings or numbers depending on the endpoint — accept both. */
+function idOf(a: Record<string, unknown> | undefined): string | undefined {
+  const v = a?.id ?? a?.addressId ?? a?.address_id;
+  if (typeof v === 'string' && v.length > 0) return v;
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  return undefined;
+}
+
+/**
+ * The docs don't pin where the list lives (bare array, {addresses}, {data:{addresses}}…),
+ * so walk the response and take the first array of records — preferring named keys at
+ * any depth so a stray secondary array can't win.
+ */
+function findRecordArray(data: unknown, depth = 4): Array<Record<string, unknown>> {
+  if (Array.isArray(data)) {
+    const recs = data.filter((x) => x && typeof x === 'object' && !Array.isArray(x));
+    return recs as Array<Record<string, unknown>>;
+  }
+  if (!data || typeof data !== 'object' || depth === 0) return [];
+  const o = data as Record<string, unknown>;
+  for (const k of ['addresses', 'items', 'results', 'data']) {
+    const hit = findRecordArray(o[k], depth - 1);
+    if (hit.length > 0) return hit;
+  }
+  for (const v of Object.values(o)) {
+    const hit = findRecordArray(v, depth - 1);
+    if (hit.length > 0) return hit;
+  }
+  return [];
+}
+
+/** PII-safe structural sketch (key names and types only, never values) for log diagnosis. */
+function shapeOf(v: unknown, depth = 3): unknown {
+  if (Array.isArray(v)) return v.length === 0 ? 'array(0)' : [shapeOf(v[0], depth - 1), `x${v.length}`];
+  if (v && typeof v === 'object') {
+    if (depth === 0) return 'object';
+    const entries = Object.entries(v as Record<string, unknown>).slice(0, 20);
+    return Object.fromEntries(entries.map(([k, x]) => [k, shapeOf(x, depth - 1)]));
+  }
+  return typeof v === 'string' ? `string(${(v as string).length})` : typeof v;
+}
+
+const numish = (v: unknown): number | undefined => {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v);
+  return undefined;
+};
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length > 0 ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
