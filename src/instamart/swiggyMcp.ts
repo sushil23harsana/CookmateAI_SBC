@@ -410,17 +410,18 @@ function firstArray(o: Record<string, unknown>, keys: string[]): unknown[] {
 
 /** Short human label for an address picker, checking one level of nesting too. */
 function labelOf(a: Record<string, unknown>): string {
-  const tag = pickStr(a, ['annotation', 'label', 'tag', 'name', 'addressLabel', 'address_label']);
+  // Live field names (2026-08-13): addressTag ("Home"), addressCategory, addressLine.
+  const tag = pickStr(a, ['addressTag', 'addressCategory', 'annotation', 'label', 'tag', 'name']);
   const place = pickStr(a, [
+    'addressLine',
     'area',
     'locality',
     'city',
     'address',
     'addressLine1',
-    'address_line1',
     'street',
     'landmark',
-  ]);
+  ])?.slice(0, 44);
   return [tag, place].filter(Boolean).join(' · ').slice(0, 60) || 'Saved address';
 }
 
