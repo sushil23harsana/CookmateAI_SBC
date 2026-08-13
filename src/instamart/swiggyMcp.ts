@@ -159,19 +159,13 @@ export class SwiggyInstamartProvider implements InstamartProvider {
   /** The user's saved Swiggy addresses, PII-light: id + a short label for a picker. */
   async listAddresses(): Promise<Array<{ id: string; label: string }>> {
     const list = await this.fetchAddresses();
-    return list
-      .map((a) => ({
-        id: idOf(a) ?? '',
-        label:
-          [
-            str(a.annotation ?? a.label ?? a.tag ?? a.name),
-            str(a.area ?? a.locality ?? a.city ?? a.address ?? a.address_line1 ?? a.addressLine1),
-          ]
-            .filter(Boolean)
-            .join(' · ')
-            .slice(0, 60) || 'Saved address',
-      }))
-      .filter((a) => a.id);
+    const out = list.map((a) => ({ id: idOf(a) ?? '', label: labelOf(a) })).filter((a) => a.id);
+    if (out.length > 0 && out.every((a) => a.label === 'Saved address')) {
+      // Ids parsed but no label field matched (seen live 2026-08-13) — sketch
+      // one record's keys and types (never values) to learn the real names.
+      logger.warn('no label field matched on Swiggy addresses', { record: shapeOf(list[0], 2) });
+    }
+    return out;
   }
 
   /**
@@ -412,6 +406,39 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 function firstArray(o: Record<string, unknown>, keys: string[]): unknown[] {
   for (const k of keys) if (Array.isArray(o[k])) return o[k] as unknown[];
   return [];
+}
+
+/** Short human label for an address picker, checking one level of nesting too. */
+function labelOf(a: Record<string, unknown>): string {
+  const tag = pickStr(a, ['annotation', 'label', 'tag', 'name', 'addressLabel', 'address_label']);
+  const place = pickStr(a, [
+    'area',
+    'locality',
+    'city',
+    'address',
+    'addressLine1',
+    'address_line1',
+    'street',
+    'landmark',
+  ]);
+  return [tag, place].filter(Boolean).join(' · ').slice(0, 60) || 'Saved address';
+}
+
+function pickStr(a: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = a[k];
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+  }
+  // e.g. { address: { area, city } } — the label often lives one level down
+  for (const v of Object.values(a)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      for (const k of keys) {
+        const nv = (v as Record<string, unknown>)[k];
+        if (typeof nv === 'string' && nv.trim().length > 0) return nv.trim();
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Address ids arrive as strings or numbers depending on the endpoint — accept both. */
