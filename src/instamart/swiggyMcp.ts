@@ -129,19 +129,14 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       try {
         const res = await client.callTool({ name, arguments: args });
         const content = (res.content as Array<{ type: string; text?: string }>) ?? [];
-        const text = content
+        const texts = content
           .filter((c) => c.type === 'text' && typeof c.text === 'string')
-          .map((c) => c.text)
-          .join('\n');
-        if (res.isError) throw new ProviderError(`Swiggy tool ${name} returned an error: ${text}`, true);
+          .map((c) => c.text as string);
+        const joined = texts.join('\n');
+        if (res.isError) throw new ProviderError(`Swiggy tool ${name} returned an error: ${joined}`, true);
         logger.debug('swiggy tool ok', { tool: name, ms: Date.now() - started });
-        // Some tools answer via structuredContent with no text blocks — reading only
-        // text would silently turn a full response into an empty one.
         const structured = (res as { structuredContent?: unknown }).structuredContent;
-        if (!text && structured !== undefined) {
-          return unwrapParsed(name, structured);
-        }
-        return unwrapEnvelope(name, text);
+        return unwrapResult(name, texts, structured, joined);
       } catch (err) {
         const retryable = err instanceof ProviderError ? err.retryable : true;
         logger.warn('swiggy tool failed', {
@@ -193,6 +188,9 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       const pagination = asRecord(asRecord(raw).pagination);
       logger.warn('get_addresses returned no parseable addresses', {
         shape: shapeOf(raw),
+        // When the payload is still an unparseable string, its opening chars
+        // reveal the wrapper (fence/prose) without exposing address details.
+        head: typeof raw === 'string' ? raw.slice(0, 40) : undefined,
         total: pagination.total,
         totalPages: pagination.totalPages,
       });
@@ -320,14 +318,37 @@ export class SwiggyInstamartProvider implements InstamartProvider {
 }
 
 /** { success:false, error } is a domain failure even though the HTTP call succeeded. */
-function unwrapEnvelope(tool: string, text: string): unknown {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return text; // not JSON — let the caller's normalizer decide
+/**
+ * Tool results carry text blocks and/or structuredContent, and live text blocks
+ * are not always bare JSON (seen 2026-08-13: a 2KB string JSON.parse rejects —
+ * likely fence- or prose-wrapped). Try the joined text, then each block, then
+ * structuredContent; only fall back to raw text when nothing parses.
+ */
+function unwrapResult(tool: string, texts: string[], structured: unknown, joined: string): unknown {
+  for (const candidate of texts.length > 1 ? [joined, ...texts] : texts) {
+    const parsed = tryParseJson(candidate);
+    if (parsed) return unwrapParsed(tool, parsed.value);
   }
-  return unwrapParsed(tool, parsed);
+  if (structured !== undefined) return unwrapParsed(tool, structured);
+  return joined;
+}
+
+/** Parse JSON that may be fence-wrapped or embedded in prose. */
+function tryParseJson(text: string): { value: unknown } | undefined {
+  const candidates = [text];
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  if (fence?.[1]) candidates.push(fence[1]);
+  const start = text.search(/[[{]/);
+  const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+  if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1));
+  for (const c of candidates) {
+    try {
+      return { value: JSON.parse(c.trim()) };
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined;
 }
 
 function unwrapParsed(tool: string, parsed: unknown): unknown {
