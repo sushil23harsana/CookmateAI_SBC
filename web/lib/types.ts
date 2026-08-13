@@ -24,6 +24,25 @@ export interface OrderResult {
   status: string;
   etaMinutes?: number;
   total?: number;
+  /** UPI: order awaits the user's payment approval in their UPI app. */
+  pendingPayment?: boolean;
+  paasId?: string;
+  upiIntentUrl?: string;
+  pollingIntervalInMs?: number;
+  maxTimeToPollForInMs?: number;
+}
+
+export interface PaymentOptions {
+  codAvailable: boolean;
+  upiApps: Array<{ id: string; label: string }>;
+  qrAvailable: boolean;
+}
+
+export interface PaymentStatus {
+  status: string;
+  terminal: boolean;
+  confirmed: boolean;
+  orderStatus?: string;
 }
 
 export interface TrackResult {
@@ -33,14 +52,7 @@ export interface TrackResult {
 }
 
 export type Phase =
-  | 'recipe'
-  | 'pantry'
-  | 'searching'
-  | 'budget'
-  | 'cart'
-  | 'ordering'
-  | 'tracking'
-  | 'thinking';
+  'recipe' | 'pantry' | 'searching' | 'budget' | 'cart' | 'ordering' | 'tracking' | 'thinking';
 
 export type Role = 'user' | 'assistant';
 

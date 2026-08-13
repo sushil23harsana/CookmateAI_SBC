@@ -1,4 +1,4 @@
-import type { Cart, OrderResult, TrackResult } from './types';
+import type { Cart, OrderResult, TrackResult, PaymentOptions, PaymentStatus } from './types';
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:8787';
 
@@ -172,15 +172,59 @@ export async function updateCart(sessionId: string, skuIds: string[]): Promise<{
   return r.json();
 }
 
+export interface PaymentChoice {
+  method: 'cod' | 'upi';
+  intentApp?: string;
+  qr?: boolean;
+}
+
 export async function placeOrder(
   sessionId: string,
   cartId: string,
+  payment?: PaymentChoice,
 ): Promise<{ placed: boolean; order?: OrderResult; error?: string; reason?: string }> {
   const r = await fetch(`${BASE}/api/order`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId, cartId }),
+    body: JSON.stringify({ sessionId, cartId, ...(payment ? { payment } : {}) }),
   });
+  return r.json();
+}
+
+/** Payment methods for the current cart (COD-only unless connected to Swiggy). */
+export async function paymentOptions(sessionId: string): Promise<PaymentOptions> {
+  const r = await fetch(`${BASE}/api/payment/options?sessionId=${encodeURIComponent(sessionId)}`);
+  if (!r.ok) return { codAvailable: true, upiApps: [], qrAvailable: false };
+  return r.json();
+}
+
+/** One gentle status read of an in-flight UPI payment (server long-polls Swiggy). */
+export async function paymentStatus(
+  sessionId: string,
+  paasId: string,
+  orderId?: string,
+): Promise<PaymentStatus> {
+  const r = await fetch(`${BASE}/api/payment/status`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, paasId, ...(orderId ? { orderId } : {}) }),
+  });
+  if (!r.ok) throw await errorFrom(r);
+  return r.json();
+}
+
+/** Poll-timeout fallback: finalize a PAID order stuck pending (idempotent). */
+export async function paymentConfirm(
+  sessionId: string,
+  orderId: string,
+  paasId: string,
+): Promise<PaymentStatus> {
+  const r = await fetch(`${BASE}/api/payment/confirm`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, orderId, paasId }),
+  });
+  if (!r.ok) throw await errorFrom(r);
   return r.json();
 }
 

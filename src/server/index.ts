@@ -97,6 +97,81 @@ app.get('/api/swiggy/addresses', async (c) => {
   }
 });
 
+/**
+ * Payment methods for the current cart. COD is always offered; UPI apps / QR
+ * appear only on the live provider with a connected account (get_cart never
+ * includes UPI methods — get_payment_options is the only source).
+ */
+app.get('/api/payment/options', async (c) => {
+  const sessionId = c.req.query('sessionId');
+  const session = sessionId ? getSession(sessionId) : undefined;
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  const codOnly = { codAvailable: true, upiApps: [], qrAvailable: false };
+  if (!(session.provider instanceof SwiggyInstamartProvider) || !session.swiggyToken) {
+    return c.json(codOnly);
+  }
+  try {
+    return c.json(await session.provider.getPaymentOptions());
+  } catch (err) {
+    logger.warn('payment options failed — offering COD only', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return c.json(codOnly);
+  }
+});
+
+/**
+ * One gentle poll of an in-flight UPI payment (the server call long-polls ~19s
+ * on Swiggy's side). Passing orderId lets Swiggy auto-confirm on success.
+ */
+app.post('/api/payment/status', async (c) => {
+  const body = await readJson<{ sessionId?: string; paasId?: unknown; orderId?: unknown }>(c);
+  if (!body?.sessionId || typeof body.paasId !== 'string' || !body.paasId) {
+    return c.json({ error: 'sessionId and paasId are required' }, 400);
+  }
+  const session = getSession(body.sessionId);
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  if (!(session.provider instanceof SwiggyInstamartProvider)) {
+    return c.json({ error: 'payments are only available on the live provider' }, 400);
+  }
+  try {
+    const orderId = typeof body.orderId === 'string' && body.orderId ? body.orderId : undefined;
+    return c.json(await session.provider.checkPaymentStatus(body.paasId, orderId));
+  } catch (err) {
+    logger.warn('payment status check failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Could not check the payment status — try again in a moment.' }, 502);
+  }
+});
+
+/** Poll-timeout fallback: finalize a PAID order stuck in PENDING_PAYMENT (idempotent). */
+app.post('/api/payment/confirm', async (c) => {
+  const body = await readJson<{ sessionId?: string; orderId?: unknown; paasId?: unknown }>(c);
+  if (
+    !body?.sessionId ||
+    typeof body.orderId !== 'string' ||
+    !body.orderId ||
+    typeof body.paasId !== 'string' ||
+    !body.paasId
+  ) {
+    return c.json({ error: 'sessionId, orderId and paasId are required' }, 400);
+  }
+  const session = getSession(body.sessionId);
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  if (!(session.provider instanceof SwiggyInstamartProvider)) {
+    return c.json({ error: 'payments are only available on the live provider' }, 400);
+  }
+  try {
+    return c.json(await session.provider.confirmPendingOrder(body.orderId, body.paasId));
+  } catch (err) {
+    logger.warn('payment confirm failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: 'Could not confirm the payment — check the Swiggy app.' }, 502);
+  }
+});
+
 /** Pin which saved address this session delivers to. */
 app.post('/api/swiggy/address', async (c) => {
   const body = await readJson<{ sessionId?: string; addressId?: unknown }>(c);
@@ -314,16 +389,35 @@ function oauthPage(title: string, body: string): string {
 
 /** The confirm gate as a UI action: tapping "Place order" arms the one-shot gate. */
 app.post('/api/order', async (c) => {
-  const body = await readJson<{ sessionId?: string; cartId?: string }>(c);
+  const body = await readJson<{
+    sessionId?: string;
+    cartId?: string;
+    payment?: { method?: unknown; intentApp?: unknown; qr?: unknown };
+  }>(c);
   if (!body?.sessionId || !body.cartId) return c.json({ error: 'sessionId and cartId are required' }, 400);
   const session = getSession(body.sessionId);
   if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+
+  // The payment choice comes from the order UI, never the model; malformed
+  // input degrades to COD (the safe default) rather than erroring the gate.
+  const payment =
+    body.payment?.method === 'upi'
+      ? {
+          method: 'upi' as const,
+          ...(typeof body.payment.intentApp === 'string' && body.payment.intentApp
+            ? { intentApp: body.payment.intentApp }
+            : { qr: true }),
+        }
+      : undefined;
 
   // Arm the one-shot gate for exactly this cart; the executor's confirm hook
   // consumes it and verifies the cartId matches before any money moves.
   session.armedCartId = body.cartId;
   try {
-    const res = await session.execute('place_order', { cart_id: body.cartId });
+    const res = await session.execute('place_order', {
+      cart_id: body.cartId,
+      ...(payment ? { payment } : {}),
+    });
     return c.json(JSON.parse(res.result));
   } finally {
     session.armedCartId = undefined;

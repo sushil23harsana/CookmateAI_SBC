@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, MotionConfig } from 'framer-motion';
 import * as api from '@/lib/api';
-import type { Cart, ChatItem, Phase } from '@/lib/types';
+import type { Cart, ChatItem, OrderResult, PaymentOptions, Phase } from '@/lib/types';
 import Welcome from './Welcome';
 import Composer from './Composer';
 import MessageBubble from './MessageBubble';
@@ -11,6 +11,7 @@ import WorkingState from './WorkingState';
 import CartCard from './CartCard';
 import CartDock from './CartDock';
 import OrderCard from './OrderCard';
+import PaymentFlow from './PaymentFlow';
 
 let counter = 0;
 const uid = () => `${Date.now()}-${counter++}`;
@@ -31,6 +32,8 @@ export default function Chat() {
   const [addresses, setAddresses] = useState<api.SwiggyAddress[]>([]);
   const [addressId, setAddressId] = useState<string | undefined>(undefined);
   const [addressNote, setAddressNote] = useState<string | null>(null);
+  // Non-null while the user is choosing how to pay / approving a UPI payment.
+  const [payFlow, setPayFlow] = useState<{ cart: Cart; options: PaymentOptions } | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -169,7 +172,12 @@ export default function Chat() {
       if (busy) return;
       const sid = sessionId ?? (await freshSession().catch(() => null));
       if (!sid) {
-        push({ id: uid(), kind: 'text', role: 'assistant', text: 'I could not reach the kitchen — is the server running?' });
+        push({
+          id: uid(),
+          kind: 'text',
+          role: 'assistant',
+          text: 'I could not reach the kitchen — is the server running?',
+        });
         return;
       }
       push({ id: uid(), kind: 'text', role: 'user', text });
@@ -201,14 +209,18 @@ export default function Chat() {
               push({ id, kind: 'text', role: 'assistant', text: delta, streaming: true });
             } else {
               const id = streamingIdRef.current;
-              setItems((prev) => prev.map((it) => (it.id === id ? { ...it, text: (it.text ?? '') + delta } : it)));
+              setItems((prev) =>
+                prev.map((it) => (it.id === id ? { ...it, text: (it.text ?? '') + delta } : it)),
+              );
             }
           },
           onMessage: (t) => {
             const id = streamingIdRef.current;
             streamingIdRef.current = null;
             if (id) {
-              setItems((prev) => prev.map((it) => (it.id === id ? { ...it, text: t, streaming: false } : it)));
+              setItems((prev) =>
+                prev.map((it) => (it.id === id ? { ...it, text: t, streaming: false } : it)),
+              );
             } else if (t.trim()) {
               push({ id: uid(), kind: 'text', role: 'assistant', text: t });
             }
@@ -242,22 +254,42 @@ export default function Chat() {
     [busy, sessionId],
   );
 
+  const orderPlaced = (cart: Cart, order: OrderResult) => {
+    setItems((p) =>
+      p.map((it) => (it.kind === 'cart' && it.cart?.cartId === cart.cartId ? { ...it, ordered: true } : it)),
+    );
+    setLatestOrdered((prev) => (latestCart?.cartId === cart.cartId ? true : prev));
+    push({ id: uid(), kind: 'order', role: 'assistant', order });
+    setPayFlow(null);
+  };
+
+  const orderFailed = (text: string) => {
+    push({ id: uid(), kind: 'text', role: 'assistant', text });
+  };
+
+  /**
+   * Place order = the confirm gate. On the live provider, UPI options may be
+   * available for this cart — let the user pick; otherwise straight COD as before.
+   */
   const placeOrder = async (cart: Cart) => {
     if (!sessionId) return;
+    let options: PaymentOptions = { codAvailable: true, upiApps: [], qrAvailable: false };
+    if (swiggy?.provider === 'swiggy' && swiggy.connected) {
+      try {
+        options = await api.paymentOptions(sessionId);
+      } catch {
+        /* COD-only fallback */
+      }
+    }
+    if (options.upiApps.length > 0 || options.qrAvailable) {
+      setPayFlow({ cart, options });
+      return;
+    }
     const res = await api.placeOrder(sessionId, cart.cartId);
     if (res.placed && res.order) {
-      setItems((p) =>
-        p.map((it) => (it.kind === 'cart' && it.cart?.cartId === cart.cartId ? { ...it, ordered: true } : it)),
-      );
-      setLatestOrdered((prev) => (latestCart?.cartId === cart.cartId ? true : prev));
-      push({ id: uid(), kind: 'order', role: 'assistant', order: res.order });
+      orderPlaced(cart, res.order);
     } else {
-      push({
-        id: uid(),
-        kind: 'text',
-        role: 'assistant',
-        text: res.error || res.reason || 'That didn’t go through — let’s try again.',
-      });
+      orderFailed(res.error || res.reason || 'That didn’t go through — let’s try again.');
     }
   };
 
@@ -280,7 +312,10 @@ export default function Chat() {
         id: uid(),
         kind: 'text',
         role: 'assistant',
-        text: err instanceof api.ApiError ? err.message : 'I could not update the cart — mind telling me instead?',
+        text:
+          err instanceof api.ApiError
+            ? err.message
+            : 'I could not update the cart — mind telling me instead?',
       });
     }
   };
@@ -297,85 +332,97 @@ export default function Chat() {
     <MotionConfig reducedMotion="user">
       <div className="app">
         <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">
-            <svg width="20" height="20" viewBox="0 0 24 24">
-              <circle cx="11" cy="13" r="6.6" fill="#fff" />
-              <circle cx="11" cy="13" r="3.3" fill="#f4a23e" />
-              <rect x="17" y="11.4" width="6.4" height="3.1" rx="1.5" fill="#fff" />
-            </svg>
+          <div className="brand">
+            <div className="brand-mark">
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <circle cx="11" cy="13" r="6.6" fill="#fff" />
+                <circle cx="11" cy="13" r="3.3" fill="#f4a23e" />
+                <rect x="17" y="11.4" width="6.4" height="3.1" rx="1.5" fill="#fff" />
+              </svg>
+            </div>
+            <div className="brand-name">
+              Cook<em>mate</em>
+            </div>
           </div>
-          <div className="brand-name">
-            Cook<em>mate</em>
+          <div className="status-chip">
+            <span className="dot" />{' '}
+            {swiggy?.provider === 'swiggy'
+              ? swiggy.connected
+                ? 'Swiggy · connected'
+                : 'Swiggy'
+              : 'Instamart'}
           </div>
-        </div>
-        <div className="status-chip">
-          <span className="dot" />{' '}
-          {swiggy?.provider === 'swiggy' ? (swiggy.connected ? 'Swiggy · connected' : 'Swiggy') : 'Instamart'}
-        </div>
-      </header>
+        </header>
 
-      <div className="stream" ref={streamRef} role="log" aria-live="polite" aria-relevant="additions text">
-        {empty ? <Welcome onPick={send} /> : null}
-        {items.map((it) => {
-          if (it.kind === 'cart' && it.cart) {
-            const cart = it.cart;
-            return <CartCard key={it.id} cart={cart} ordered={!!it.ordered} onPlace={() => placeOrder(cart)} />;
-          }
-          if (it.kind === 'order' && it.order) {
-            const order = it.order;
-            return <OrderCard key={it.id} order={order} onTrack={() => track(order.orderId)} />;
-          }
-          return <MessageBubble key={it.id} item={it} />;
-        })}
-        <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
-      </div>
-
-      {swiggy?.provider === 'swiggy' && !swiggy.connected && sessionId ? (
-        <div className="connectbar">
-          <span className="connectbar-text">
-            🔐 Link your own Swiggy account — orders go to <strong>your</strong> address and payment.
-          </span>
-          <a
-            className="connectbtn"
-            href={api.swiggyConnectUrl(sessionId)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Connect Swiggy
-          </a>
+        <div className="stream" ref={streamRef} role="log" aria-live="polite" aria-relevant="additions text">
+          {empty ? <Welcome onPick={send} /> : null}
+          {items.map((it) => {
+            if (it.kind === 'cart' && it.cart) {
+              const cart = it.cart;
+              return (
+                <CartCard key={it.id} cart={cart} ordered={!!it.ordered} onPlace={() => placeOrder(cart)} />
+              );
+            }
+            if (it.kind === 'order' && it.order) {
+              const order = it.order;
+              return <OrderCard key={it.id} order={order} onTrack={() => track(order.orderId)} />;
+            }
+            return <MessageBubble key={it.id} item={it} />;
+          })}
+          <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
         </div>
-      ) : null}
 
-      {swiggy?.provider === 'swiggy' && swiggy.connected ? (
-        addresses.length > 0 ? (
+        {swiggy?.provider === 'swiggy' && !swiggy.connected && sessionId ? (
           <div className="connectbar">
-            <span className="connectbar-text">📍 Deliver to</span>
-            <select
-              className="addrselect"
-              value={addressId ?? ''}
-              onChange={(e) => void pickAddress(e.target.value)}
-              aria-label="Delivery address"
-            >
-              {addresses.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
+            <span className="connectbar-text">
+              🔐 Link your own Swiggy account — orders go to <strong>your</strong> address and payment.
+            </span>
+            <a className="connectbtn" href={api.swiggyConnectUrl(sessionId)} target="_blank" rel="noreferrer">
+              Connect Swiggy
+            </a>
           </div>
-        ) : addressNote ? (
-          <div className="connectbar">
-            <span className="connectbar-text">📍 {addressNote}</span>
-          </div>
-        ) : null
-      ) : null}
+        ) : null}
 
-      {latestCart && !latestOrdered ? (
-        <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} onChangeQty={changeQty} />
-      ) : null}
+        {swiggy?.provider === 'swiggy' && swiggy.connected ? (
+          addresses.length > 0 ? (
+            <div className="connectbar">
+              <span className="connectbar-text">📍 Deliver to</span>
+              <select
+                className="addrselect"
+                value={addressId ?? ''}
+                onChange={(e) => void pickAddress(e.target.value)}
+                aria-label="Delivery address"
+              >
+                {addresses.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : addressNote ? (
+            <div className="connectbar">
+              <span className="connectbar-text">📍 {addressNote}</span>
+            </div>
+          ) : null
+        ) : null}
 
-      <Composer onSend={send} busy={busy} />
+        {latestCart && !latestOrdered ? (
+          <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} onChangeQty={changeQty} />
+        ) : null}
+
+        {payFlow && sessionId ? (
+          <PaymentFlow
+            sessionId={sessionId}
+            cart={payFlow.cart}
+            options={payFlow.options}
+            onPlaced={(order) => orderPlaced(payFlow.cart, order)}
+            onFailedText={orderFailed}
+            onClose={() => setPayFlow(null)}
+          />
+        ) : null}
+
+        <Composer onSend={send} busy={busy} />
       </div>
     </MotionConfig>
   );

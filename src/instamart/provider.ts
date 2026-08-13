@@ -1,4 +1,11 @@
-import type { Sku, OrderResult, TrackResult } from '../types.js';
+import type {
+  Sku,
+  OrderResult,
+  TrackResult,
+  PaymentChoice,
+  PaymentOptions,
+  PaymentStatus,
+} from '../types.js';
 
 /**
  * An InstamartProvider is the swappable boundary between the agent and the
@@ -20,11 +27,29 @@ export interface InstamartProvider {
   /** Fetch authoritative current data for specific SKU ids (prices the cart trusts). */
   getItems(ids: string[]): Promise<Sku[]>;
 
-  /** Place an order. MUST only be called by the gated wrapper after confirmation. */
-  placeOrder(skuIds: string[], total: number, idempotencyKey: string): Promise<OrderResult>;
+  /**
+   * Place an order. MUST only be called by the gated wrapper after confirmation.
+   * With a UPI payment choice the result may be pendingPayment — the user then
+   * approves in their own UPI app and status is polled via checkPaymentStatus.
+   */
+  placeOrder(
+    skuIds: string[],
+    total: number,
+    idempotencyKey: string,
+    payment?: PaymentChoice,
+  ): Promise<OrderResult>;
 
   /** Current status of a placed order. */
   trackOrder(orderId: string): Promise<TrackResult>;
+
+  /** Payment methods for the current cart (optional — COD-only providers omit it). */
+  getPaymentOptions?(): Promise<PaymentOptions>;
+
+  /** One gentle status read for an in-flight UPI payment (server long-polls). */
+  checkPaymentStatus?(paasId: string, orderId?: string): Promise<PaymentStatus>;
+
+  /** Poll-timeout fallback: finalize a PAID order stuck in PENDING_PAYMENT. Idempotent. */
+  confirmPendingOrder?(orderId: string, paasId: string): Promise<PaymentStatus>;
 
   close(): Promise<void>;
 }

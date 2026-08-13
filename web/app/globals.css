@@ -723,6 +723,87 @@ body {
   cursor: pointer;
 }
 
+/* ---------- payment sheet ---------- */
+.paysheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(42, 33, 26, 0.45);
+  backdrop-filter: blur(2px);
+}
+.paysheet {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 22px;
+  background: var(--card-warm);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+.paysheet-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  color: var(--ink);
+}
+.paysheet-sub {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.paysheet-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.paybtn {
+  padding: 11px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--card, #fff);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14.5px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+.paybtn:hover {
+  border-color: var(--saffron);
+}
+.paybtn-primary {
+  background: var(--saffron);
+  border-color: var(--saffron-deep);
+  color: #fff;
+  display: block;
+}
+.paysheet-qr {
+  width: 220px;
+  height: 220px;
+  margin: 4px auto;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  background: #fff;
+}
+.paysheet-cancel {
+  margin-top: 2px;
+  padding: 8px;
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* ---------- collapsible cart dock ---------- */
 .cartdock {
   flex: 0 0 auto;

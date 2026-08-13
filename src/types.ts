@@ -62,6 +62,37 @@ export interface OrderResult {
   etaMinutes?: number;
   total?: number;
   raw?: unknown;
+  /** UPI: order created but awaiting the user's payment approval in their UPI app. */
+  pendingPayment?: boolean;
+  /** UPI: payment transaction id — required to poll status / confirm. */
+  paasId?: string;
+  /** UPI: deep link the user opens (mobile) or renders as a QR (desktop). */
+  upiIntentUrl?: string;
+  pollingIntervalInMs?: number;
+  maxTimeToPollForInMs?: number;
+}
+
+/** How the user chose to pay at the confirm gate. COD when omitted. */
+export interface PaymentChoice {
+  method: 'cod' | 'upi';
+  /** UPI app id from PaymentOptions (mobile intent flow). */
+  intentApp?: string;
+  /** Desktop flow: ask for a QR instead of an app intent. */
+  qr?: boolean;
+}
+
+export interface PaymentOptions {
+  codAvailable: boolean;
+  upiApps: Array<{ id: string; label: string }>;
+  qrAvailable: boolean;
+}
+
+export interface PaymentStatus {
+  /** success | paid | failed | refund-initiated | cancelled | cart_changed | pending */
+  status: string;
+  terminal: boolean;
+  confirmed: boolean;
+  orderStatus?: string;
 }
 
 export interface TrackResult {

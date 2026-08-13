@@ -170,7 +170,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         return JSON.stringify(await provider.trackOrder(order_id));
       }
       case 'place_order': {
-        const { cart_id } = parseOrThrow(PlaceOrderInput, input, 'place_order');
+        const { cart_id, payment } = parseOrThrow(PlaceOrderInput, input, 'place_order');
         const cart = carts.get(cart_id);
         if (!cart) {
           return JSON.stringify({
@@ -186,10 +186,14 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         const ok = await deps.confirmOrder(cart);
         if (!ok) return JSON.stringify({ placed: false, reason: 'User declined at the confirm gate.' });
 
-        const order = await provider.placeOrder(cartSkuIds(cart), cart.total, cart.cartId);
+        const order = await provider.placeOrder(cartSkuIds(cart), cart.total, cart.cartId, payment);
         placedByCart.set(cart_id, order);
         deps.onOrderPlaced?.(order, cart);
-        logger.info('order placed', { orderId: order.orderId, total: cart.total });
+        logger.info('order placed', {
+          orderId: order.orderId,
+          total: cart.total,
+          pendingPayment: order.pendingPayment ?? false,
+        });
         return JSON.stringify({ placed: true, order });
       }
       default:

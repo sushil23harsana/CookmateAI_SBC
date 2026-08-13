@@ -1,7 +1,14 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { InstamartProvider } from './provider.js';
-import type { Sku, OrderResult, TrackResult } from '../types.js';
+import type {
+  Sku,
+  OrderResult,
+  TrackResult,
+  PaymentChoice,
+  PaymentOptions,
+  PaymentStatus,
+} from '../types.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { ProviderError } from '../errors.js';
@@ -40,6 +47,17 @@ const TOOLS = {
   checkout: { env: 'SWIGGY_TOOL_ORDER', name: 'checkout', pattern: /checkout/i },
   orders: { env: 'SWIGGY_TOOL_ORDERS', name: 'get_orders', pattern: /get.*orders$/i },
   track: { env: 'SWIGGY_TOOL_TRACK', name: 'track_order', pattern: /track/i },
+  payOptions: {
+    env: 'SWIGGY_TOOL_PAY_OPTIONS',
+    name: 'get_payment_options',
+    pattern: /payment.*options/i,
+  },
+  payStatus: {
+    env: 'SWIGGY_TOOL_PAY_STATUS',
+    name: 'check_payment_status',
+    pattern: /payment.*status/i,
+  },
+  payConfirm: { env: 'SWIGGY_TOOL_PAY_CONFIRM', name: 'confirm_order', pattern: /confirm.*order/i },
 } as const;
 
 interface SwiggyAddress {
@@ -256,7 +274,12 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     return skus;
   }
 
-  async placeOrder(skuIds: string[], total: number, idempotencyKey: string): Promise<OrderResult> {
+  async placeOrder(
+    skuIds: string[],
+    total: number,
+    idempotencyKey: string,
+    payment?: PaymentChoice,
+  ): Promise<OrderResult> {
     if (total >= CHECKOUT_MAX_RUPEES) {
       throw new ProviderError(
         `Swiggy caps agent checkout at ₹${CHECKOUT_MAX_RUPEES} (v1) — this ₹${total} cart must be ` +
@@ -272,9 +295,17 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       2,
     );
 
+    // Cash is the documented default; UPI adds intentApp (mobile) or a QR (desktop).
+    const args: Record<string, unknown> = { addressId: address.id };
+    if (payment?.method === 'upi') {
+      args.paymentMethod = 'UPI';
+      if (payment.intentApp) args.intentApp = payment.intentApp;
+      else args.generateUPIQR = true;
+    }
+
     try {
-      // COD-only in v1; omitting paymentMethod uses the documented default. NEVER retried.
-      const data = asRecord(await this.call(this.resolve('checkout'), { addressId: address.id }, 0));
+      // Checkout is NOT idempotent — NEVER retried.
+      const data = asRecord(await this.call(this.resolve('checkout'), args, 0));
       return toOrder(data, total, idempotencyKey);
     } catch (err) {
       // Documented check-then-retry: checkout is not idempotent, so on failure verify
@@ -319,11 +350,64 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     };
   }
 
+  /**
+   * Live payment options for the CURRENT server-side cart (context is resolved
+   * by Swiggy; no params). get_cart does not include UPI methods — this is the
+   * only source. `platforms` is absent entirely when UPI is unavailable.
+   */
+  async getPaymentOptions(): Promise<PaymentOptions> {
+    const data = asRecord(await this.call(this.resolve('payOptions'), {}, 2));
+    const platforms = asRecord(data.platforms);
+    const mobileMethods = firstArray(asRecord(platforms.mobile), ['methods']) as Array<
+      Record<string, unknown>
+    >;
+    const desktopMethods = firstArray(asRecord(platforms.desktop), ['methods']) as Array<
+      Record<string, unknown>
+    >;
+    return {
+      codAvailable: true, // v1 platform default; the cod object just carries its label
+      upiApps: mobileMethods
+        .map((m) => ({ id: str(m.id) ?? '', label: str(m.label) ?? '' }))
+        .filter((m) => m.id && m.label),
+      qrAvailable: desktopMethods.length > 0,
+    };
+  }
+
+  /**
+   * One status read for an in-flight UPI payment. Swiggy long-polls ~19s server
+   * side, so this is called sparingly and NEVER retried; passing orderId lets
+   * their side auto-confirm on success.
+   */
+  async checkPaymentStatus(paasId: string, orderId?: string): Promise<PaymentStatus> {
+    const data = asRecord(
+      await this.call(this.resolve('payStatus'), { paasId, ...(orderId ? { orderId } : {}) }, 0),
+    );
+    return toPaymentStatus(data);
+  }
+
+  /** Poll-timeout fallback (documented as idempotent and safe to retry). */
+  async confirmPendingOrder(orderId: string, paasId: string): Promise<PaymentStatus> {
+    const data = asRecord(await this.call(this.resolve('payConfirm'), { orderId, paasId }, 1));
+    return toPaymentStatus(data);
+  }
+
   async close(): Promise<void> {
     await this.client?.close();
     this.client = undefined;
     this.address = undefined;
   }
+}
+
+function toPaymentStatus(data: Record<string, unknown>): PaymentStatus {
+  const status = (str(data.status) ?? 'pending').toLowerCase();
+  return {
+    status,
+    terminal:
+      data.terminal === true ||
+      ['success', 'paid', 'failed', 'refund-initiated', 'cancelled', 'cart_changed'].includes(status),
+    confirmed: data.confirmed === true || data.isTerminalSuccess === true,
+    orderStatus: str(data.orderStatus),
+  };
 }
 
 /** { success:false, error } is a domain failure even though the HTTP call succeeded. */
@@ -427,12 +511,23 @@ function toCartItems(ids: string[]): Array<{ spinId: string; quantity: number }>
 }
 
 function toOrder(data: Record<string, unknown>, total: number, idempotencyKey: string): OrderResult {
+  const status = str(data.status) ?? 'PLACED';
+  const pendingPayment = status.toUpperCase() === 'PENDING_PAYMENT';
   return {
     orderId: str(data.orderId ?? data.order_id ?? data.id) ?? `UNVERIFIED-${idempotencyKey.slice(-8)}`,
-    status: str(data.status) ?? 'PLACED',
+    status,
     etaMinutes: num(data.etaMinutes ?? data.eta),
     total,
     raw: data,
+    ...(pendingPayment
+      ? {
+          pendingPayment,
+          paasId: str(data.paasId),
+          upiIntentUrl: str(data.upiIntentUrl),
+          pollingIntervalInMs: num(data.pollingIntervalInMs) ?? 5000,
+          maxTimeToPollForInMs: num(data.maxTimeToPollForInMs) ?? 300000,
+        }
+      : {}),
   };
 }
 

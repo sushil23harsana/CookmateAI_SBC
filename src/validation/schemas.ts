@@ -32,6 +32,14 @@ export const ReviewCartInput = z.object({
 
 export const PlaceOrderInput = z.object({
   cart_id: z.string().min(1, 'cart_id from review_cart is required'),
+  // Chosen by the USER in the order UI (never by the model): COD when omitted.
+  payment: z
+    .object({
+      method: z.enum(['cod', 'upi']),
+      intentApp: z.string().min(1).optional(),
+      qr: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const TrackOrderInput = z.object({
