@@ -380,21 +380,32 @@ function normalizeCatalog(data: unknown): Sku[] {
   const arr = findRecordArray(data, ['products', 'items', 'results', 'data']);
   const out: Sku[] = [];
   for (const o of arr as Array<Record<string, unknown>>) {
-    const variants = Array.isArray(o.variants) ? (o.variants as Array<Record<string, unknown>>) : [o];
+    // Live field is `variations` (docs prose says variants — both accepted).
+    const variantList = o.variations ?? o.variants;
+    const variants = Array.isArray(variantList) ? (variantList as Array<Record<string, unknown>>) : [o];
     for (const v of variants) {
       const candidate = {
         id: v.spinId ?? v.spin_id ?? v.id ?? o.spinId ?? o.id ?? o.itemId ?? o.productId,
-        name: v.name ?? v.displayName ?? o.name ?? o.title ?? o.displayName,
-        brand: v.brand ?? o.brand ?? o.brandName,
-        price: v.price ?? v.finalPrice ?? v.sellingPrice ?? v.offerPrice ?? v.mrp ?? o.price,
-        packSize: v.packSize ?? v.quantity ?? v.weight ?? v.unit ?? o.packSize,
-        inStock: v.inStock ?? v.available ?? o.inStock ?? true,
+        name: v.displayName ?? v.name ?? o.displayName ?? o.name ?? o.title,
+        brand: v.brandName ?? v.brand ?? o.brand ?? o.brandName,
+        price: priceOf(v.price ?? v.finalPrice ?? v.sellingPrice ?? v.offerPrice ?? v.mrp ?? o.price),
+        packSize: v.quantityDescription ?? v.packSize ?? v.quantity ?? v.weight ?? v.unit ?? o.packSize,
+        inStock: v.isInStockAndAvailable ?? v.inStock ?? v.available ?? o.inStock ?? true,
       };
       const r = SkuSchema.safeParse(candidate);
       if (r.success) out.push(r.data);
     }
   }
   return out;
+}
+
+/** Live prices arrive as { mrp, offerPrice, unitLevelPrice } objects — pick the payable number. */
+function priceOf(p: unknown): unknown {
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    const r = p as Record<string, unknown>;
+    return r.offerPrice ?? r.finalPrice ?? r.sellingPrice ?? r.price ?? r.mrp;
+  }
+  return p;
 }
 
 /** Collapse a (possibly duplicated) sku-id list into update_cart's { spinId, quantity }. */
