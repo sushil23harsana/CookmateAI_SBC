@@ -8,6 +8,7 @@ import type {
   PaymentChoice,
   PaymentOptions,
   PaymentStatus,
+  ProviderBill,
 } from '../types.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -270,8 +271,21 @@ export class SwiggyInstamartProvider implements InstamartProvider {
         head: typeof cart === 'string' ? cart.slice(0, 60) : undefined,
       });
     }
-    logger.info('swiggy cart priced', { requested: new Set(ids).size, priced: skus.length });
+    // Swiggy's billBreakdown is the ONLY truthful final amount — delivery fee,
+    // taxes and discounts never appear on the item prices themselves.
+    this.bill = parseBill(asRecord(cart));
+    logger.info('swiggy cart priced', {
+      requested: new Set(ids).size,
+      priced: skus.length,
+      toPay: this.bill?.toPay,
+    });
     return skus;
+  }
+
+  private bill?: ProviderBill;
+
+  lastBill(): ProviderBill | undefined {
+    return this.bill;
   }
 
   async placeOrder(
@@ -569,6 +583,38 @@ function pickStr(a: Record<string, unknown>, keys: string[]): string | undefined
         if (typeof nv === 'string' && nv.trim().length > 0) return nv.trim();
       }
     }
+  }
+  return undefined;
+}
+
+/**
+ * Extract the authoritative bill from a live get_cart response:
+ * { cartTotalAmount, billBreakdown: { lineItems: [...], toPay: { label, value } } }.
+ * Values arrive as strings ("₹351") or numbers; parse tolerantly and return
+ * undefined when nothing usable is present so the engine keeps its own math.
+ */
+function parseBill(cart: Record<string, unknown>): ProviderBill | undefined {
+  const bb = asRecord(cart.billBreakdown);
+  const lines = (Array.isArray(bb.lineItems) ? bb.lineItems : [])
+    .map((l) => {
+      const r = asRecord(l);
+      return {
+        label: str(r.label ?? r.name ?? r.title) ?? '',
+        amount: money(r.value ?? r.amount ?? r.price),
+      };
+    })
+    .filter((l): l is { label: string; amount: number } => Boolean(l.label) && l.amount !== undefined);
+  const toPay = money(asRecord(bb.toPay).value) ?? money(cart.cartTotalAmount);
+  if (toPay === undefined && lines.length === 0) return undefined;
+  return { toPay, lines };
+}
+
+/** "₹1,234.50" | "351" | 351 → number of rupees (undefined when unparseable). */
+function money(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim()) {
+    const n = Number(v.replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(n)) return n;
   }
   return undefined;
 }

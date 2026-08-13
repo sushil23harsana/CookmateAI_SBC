@@ -111,23 +111,37 @@ export default function CartCard({
       </div>
 
       <div className="totals">
-        <div className="trow">
-          <span>Items</span>
-          <span>₹{cart.itemsTotal}</span>
-        </div>
-        <div className="trow">
-          <span>Delivery</span>
-          <span>₹{cart.fees}</span>
-        </div>
+        {cart.bill?.length ? (
+          // Swiggy's own bill lines (delivery, GST, discounts) — the real charges.
+          cart.bill.map((b) => (
+            <div className="trow" key={b.label}>
+              <span>{b.label}</span>
+              <span>₹{b.amount}</span>
+            </div>
+          ))
+        ) : (
+          <>
+            <div className="trow">
+              <span>Items</span>
+              <span>₹{cart.itemsTotal}</span>
+            </div>
+            <div className="trow">
+              <span>Delivery</span>
+              <span>₹{cart.fees}</span>
+            </div>
+          </>
+        )}
         <div className="trow grand">
-          <span>Total</span>
+          <span>To pay</span>
           <span className="rupee">₹{total}</span>
         </div>
       </div>
 
       {cart.belowMinOrderValue ? (
         <div style={{ padding: '6px 18px 0' }}>
-          <span className="chip warn">Add ₹{cart.minOrderValue - cart.itemsTotal} more to reach the minimum</span>
+          <span className="chip warn">
+            Add ₹{cart.minOrderValue - cart.itemsTotal} more to reach the minimum
+          </span>
         </div>
       ) : null}
 

@@ -54,6 +54,15 @@ export interface Cart {
   minOrderValue: number;
   belowMinOrderValue: boolean;
   createdAt: number;
+  /** The provider's own bill breakdown (delivery/GST/discounts), when it gave one. */
+  bill?: Array<{ label: string; amount: number }>;
+}
+
+/** A provider's authoritative bill for the current server-side cart. */
+export interface ProviderBill {
+  /** The exact amount the user will pay, per the provider. */
+  toPay?: number;
+  lines: Array<{ label: string; amount: number }>;
 }
 
 export interface OrderResult {

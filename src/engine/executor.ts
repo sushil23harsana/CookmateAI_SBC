@@ -161,6 +161,14 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         const missing = sku_ids.filter((id) => !byId.has(id));
         const expanded = sku_ids.flatMap((id) => byId.get(id) ?? []);
         const cart = computeCart(expanded, { deliveryFee, minOrderValue });
+        // When the provider returned its own bill for this exact cart, that is
+        // the truth the user will be charged — our flat fee is only a fallback.
+        const bill = provider.lastBill?.();
+        if (bill?.toPay !== undefined && bill.toPay > 0 && expanded.length > 0) {
+          cart.total = bill.toPay;
+          cart.fees = Math.max(0, Math.round((bill.toPay - cart.itemsTotal) * 100) / 100);
+          if (bill.lines.length > 0) cart.bill = bill.lines;
+        }
         carts.put(cart);
         deps.onCartReviewed?.(cart);
         return JSON.stringify({ cart, missing });

@@ -88,14 +88,25 @@ export default function CartDock({
               ))}
             </div>
             <div className="totals">
-              <div className="trow">
-                <span>Items</span>
-                <span>₹{cart.itemsTotal}</span>
-              </div>
-              <div className="trow">
-                <span>Delivery</span>
-                <span>₹{cart.fees}</span>
-              </div>
+              {cart.bill?.length ? (
+                cart.bill.map((b) => (
+                  <div className="trow" key={b.label}>
+                    <span>{b.label}</span>
+                    <span>₹{b.amount}</span>
+                  </div>
+                ))
+              ) : (
+                <>
+                  <div className="trow">
+                    <span>Items</span>
+                    <span>₹{cart.itemsTotal}</span>
+                  </div>
+                  <div className="trow">
+                    <span>Delivery</span>
+                    <span>₹{cart.fees}</span>
+                  </div>
+                </>
+              )}
             </div>
           </motion.div>
         ) : null}

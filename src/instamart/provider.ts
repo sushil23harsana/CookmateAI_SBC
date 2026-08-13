@@ -5,6 +5,7 @@ import type {
   PaymentChoice,
   PaymentOptions,
   PaymentStatus,
+  ProviderBill,
 } from '../types.js';
 
 /**
@@ -41,6 +42,13 @@ export interface InstamartProvider {
 
   /** Current status of a placed order. */
   trackOrder(orderId: string): Promise<TrackResult>;
+
+  /**
+   * The provider's authoritative bill for the cart priced by the LAST getItems
+   * call (delivery fee, taxes, discounts, final to-pay). Optional — providers
+   * without a server-side bill let the engine compute fees itself.
+   */
+  lastBill?(): ProviderBill | undefined;
 
   /** Payment methods for the current cart (optional — COD-only providers omit it). */
   getPaymentOptions?(): Promise<PaymentOptions>;

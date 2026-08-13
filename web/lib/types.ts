@@ -17,6 +17,8 @@ export interface Cart {
   minOrderValue: number;
   belowMinOrderValue: boolean;
   createdAt: number;
+  /** Swiggy's own bill breakdown (delivery/GST/discounts) when available. */
+  bill?: Array<{ label: string; amount: number }>;
 }
 
 export interface OrderResult {
