@@ -49,6 +49,10 @@ export default function PaymentFlow({
 }) {
   const [stage, setStage] = useState<Stage>({ kind: 'choose' });
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  // On a phone you can't scan a QR you're displaying — the UPI app buttons are
+  // the mobile path, so hide the QR option there (unless it's the only UPI way).
+  const [touchDevice, setTouchDevice] = useState(false);
+  useEffect(() => setTouchDevice(window.matchMedia('(pointer: coarse)').matches), []);
   const stopRef = useRef(false);
   useEffect(
     () => () => {
@@ -146,7 +150,7 @@ export default function PaymentFlow({
                   📲 {a.label}
                 </button>
               ))}
-              {options.qrAvailable ? (
+              {options.qrAvailable && !(touchDevice && options.upiApps.length > 0) ? (
                 <button className="paybtn" onClick={() => void pay({ method: 'upi', qr: true })}>
                   🔳 Scan a UPI QR
                 </button>

@@ -159,6 +159,19 @@ export default function Chat() {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [items, phase]);
 
+  // When the on-screen keyboard opens/closes the viewport resizes; keep the
+  // stream pinned to the latest message unless the user has scrolled up to read.
+  useEffect(() => {
+    const onResize = () => {
+      const el = streamRef.current;
+      if (!el) return;
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 220;
+      if (nearBottom) el.scrollTo({ top: el.scrollHeight });
+    };
+    window.visualViewport?.addEventListener('resize', onResize);
+    return () => window.visualViewport?.removeEventListener('resize', onResize);
+  }, []);
+
   const push = (it: ChatItem) => setItems((p) => [...p, it]);
 
   async function freshSession(): Promise<string> {

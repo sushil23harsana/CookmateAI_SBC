@@ -49,6 +49,12 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden; /* the stream scrolls, not the page */
+  overscroll-behavior: none; /* no rubber-band pulling the browser chrome around */
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation; /* no double-tap-zoom delay on controls */
 }
 
 /* ambient atmosphere: warm glows + faint grain */
@@ -824,6 +830,47 @@ body {
   text-decoration: underline;
 }
 
+/* On phones the payment step is a true bottom sheet. */
+@media (max-width: 520px) {
+  .paysheet-backdrop {
+    place-items: end stretch;
+    padding: 0;
+  }
+  .paysheet {
+    width: 100%;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    border-bottom: none;
+    padding: 14px 20px calc(20px + env(safe-area-inset-bottom));
+    animation: sheet-up 0.28s ease;
+  }
+  .paysheet::before {
+    content: '';
+    width: 40px;
+    height: 4px;
+    margin: 0 auto 6px;
+    border-radius: var(--r-pill);
+    background: var(--line-2);
+  }
+  .paybtn {
+    padding: 15px 16px;
+    font-size: 16px;
+  }
+  .paysheet-cancel {
+    padding: 13px;
+    font-size: 14px;
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* ---------- collapsible cart dock ---------- */
 .cartdock {
   flex: 0 0 auto;
@@ -970,7 +1017,7 @@ body {
   resize: none;
   background: transparent;
   font-family: var(--font-body);
-  font-size: 15.5px;
+  font-size: 16px; /* ≥16px so iOS doesn't zoom the page on focus */
   color: var(--ink);
   line-height: 1.45;
   max-height: 130px;
