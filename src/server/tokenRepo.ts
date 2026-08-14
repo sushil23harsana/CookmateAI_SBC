@@ -20,33 +20,53 @@ export const tokenPersistenceEnabled = Boolean(sql);
 
 function init(): Promise<unknown> {
   if (!sql) return Promise.resolve();
-  ready ??= sql`
-    CREATE TABLE IF NOT EXISTS swiggy_tokens (
-      user_id    text PRIMARY KEY,
-      token      text NOT NULL,
-      expires_at timestamptz,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )`;
+  ready ??= (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS swiggy_tokens (
+        user_id    text PRIMARY KEY,
+        token      text NOT NULL,
+        expires_at timestamptz,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+    // The user's chosen delivery address rides along with the connection, so a
+    // restart doesn't silently fall back to their first saved address.
+    await sql`ALTER TABLE swiggy_tokens ADD COLUMN IF NOT EXISTS address_id text`;
+  })();
   return ready;
 }
 
-export async function loadToken(userId: string): Promise<{ token: string; expiresAt?: number } | undefined> {
+export async function loadToken(
+  userId: string,
+): Promise<{ token: string; expiresAt?: number; addressId?: string } | undefined> {
   if (!sql) return undefined;
   try {
     await init();
     const rows = (await sql`
-      SELECT token, expires_at FROM swiggy_tokens
+      SELECT token, expires_at, address_id FROM swiggy_tokens
       WHERE user_id = ${userId} AND (expires_at IS NULL OR expires_at > now())`) as Array<{
       token: string;
       expires_at: string | Date | null;
+      address_id: string | null;
     }>;
     const row = rows[0];
     if (!row) return undefined;
     const expiresAt = row.expires_at ? new Date(row.expires_at).getTime() : undefined;
-    return { token: row.token, expiresAt };
+    return { token: row.token, expiresAt, addressId: row.address_id ?? undefined };
   } catch (err) {
     logger.warn('token load failed — continuing without persistence', { message: msg(err) });
     return undefined;
+  }
+}
+
+/** Remember the user's explicit delivery-address pick (no-op without a DB row). */
+export async function saveAddress(userId: string, addressId: string): Promise<void> {
+  if (!sql) return;
+  try {
+    await init();
+    await sql`UPDATE swiggy_tokens SET address_id = ${addressId}, updated_at = now()
+      WHERE user_id = ${userId}`;
+  } catch (err) {
+    logger.warn('address save failed — pick will not persist across restarts', { message: msg(err) });
   }
 }
 

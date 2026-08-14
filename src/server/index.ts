@@ -8,7 +8,7 @@ import { logger } from '../logger.js';
 import { rateLimit } from './rateLimit.js';
 import { createSession, getSession, sessionCount, sweepExpiredSessions } from './sessions.js';
 import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
-import { loadToken, saveToken } from './tokenRepo.js';
+import { loadToken, saveToken, saveAddress } from './tokenRepo.js';
 import { SwiggyInstamartProvider } from '../instamart/swiggyMcp.js';
 import type { Cart } from '../types.js';
 
@@ -52,6 +52,7 @@ app.post('/api/session', async (c) => {
     if (saved) {
       s.swiggyToken = saved.token;
       s.swiggyTokenExpiresAt = saved.expiresAt;
+      s.swiggyAddressId = saved.addressId;
     }
   }
   return c.json({ sessionId: s.id });
@@ -181,6 +182,8 @@ app.post('/api/swiggy/address', async (c) => {
   const session = getSession(body.sessionId);
   if (!session) return c.json({ error: 'unknown or expired session' }, 404);
   session.swiggyAddressId = body.addressId;
+  // Fire-and-forget: an explicit pick should survive restarts alongside the token.
+  if (session.userId) void saveAddress(session.userId, body.addressId);
   return c.json({ ok: true, selected: session.swiggyAddressId });
 });
 

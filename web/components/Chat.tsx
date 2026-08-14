@@ -95,6 +95,31 @@ export default function Chat() {
       .catch(() => {});
   }, []);
 
+  // A server restart wiped the old session's cart snapshot, but the browser
+  // still holds the cart. Re-review it on the fresh session so "Place order"
+  // keeps working — prices come back server-authoritative, so any drift shows.
+  const rehydrateCart = useCallback(async (newSessionId: string) => {
+    try {
+      const dock = localStorage.getItem('cookmate_dock');
+      const d = dock ? (JSON.parse(dock) as { cart?: Cart; ordered?: boolean }) : null;
+      if (!d?.cart || d.ordered) return;
+      const stale = d.cart;
+      const skuIds = stale.lines.flatMap((l) => Array<string>(Math.max(0, l.qty)).fill(l.id));
+      if (skuIds.length === 0) return;
+      const res = await api.updateCart(newSessionId, skuIds);
+      const fresh = res.cart;
+      if (!fresh) return;
+      setLatestCart(fresh);
+      setLatestOrdered(false);
+      // Swap the stream's copy of the stale card too, so both stay placeable.
+      setItems((p) =>
+        p.map((it) => (it.kind === 'cart' && it.cart?.cartId === stale.cartId ? { ...it, cart: fresh } : it)),
+      );
+    } catch {
+      /* not connected / items unavailable — the user can rebuild by chatting */
+    }
+  }, []);
+
   // Check connection state when the session is known, and again whenever the tab
   // regains focus — that's the moment the user returns from Swiggy's approval page.
   const refreshSwiggy = useCallback(() => {
@@ -110,6 +135,7 @@ export default function Chat() {
             .then((id) => {
               localStorage.setItem('cookmate_session', id);
               setSessionId(id);
+              void rehydrateCart(id);
             })
             .catch(() => {});
           return;
@@ -117,7 +143,7 @@ export default function Chat() {
         setSwiggy(st);
       })
       .catch(() => {});
-  }, [sessionId]);
+  }, [sessionId, rehydrateCart]);
 
   useEffect(() => {
     refreshSwiggy();
