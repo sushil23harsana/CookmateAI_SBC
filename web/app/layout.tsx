@@ -1,9 +1,19 @@
 import type { Metadata, Viewport } from 'next';
+import PwaSetup from '@/components/Pwa';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Cookmate — your kitchen co-pilot',
   description: 'Tell me a dish or a budget, and I’ll build your Swiggy Instamart basket.',
+  appleWebApp: {
+    capable: true,
+    title: 'Cookmate',
+    statusBarStyle: 'default',
+  },
+  icons: {
+    icon: '/icon-192.png',
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 export const viewport: Viewport = {
@@ -11,6 +21,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <div className="bg" />
+        <PwaSetup />
         {children}
       </body>
     </html>

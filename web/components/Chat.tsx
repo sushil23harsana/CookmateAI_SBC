@@ -12,6 +12,7 @@ import CartCard from './CartCard';
 import CartDock from './CartDock';
 import OrderCard from './OrderCard';
 import PaymentFlow from './PaymentFlow';
+import { InstallChip } from './Pwa';
 
 let counter = 0;
 const uid = () => `${Date.now()}-${counter++}`;
@@ -344,13 +345,16 @@ export default function Chat() {
               Cook<em>mate</em>
             </div>
           </div>
-          <div className="status-chip">
-            <span className="dot" />{' '}
-            {swiggy?.provider === 'swiggy'
-              ? swiggy.connected
-                ? 'Swiggy · connected'
-                : 'Swiggy'
-              : 'Instamart'}
+          <div className="topbar-right">
+            <InstallChip />
+            <div className="status-chip">
+              <span className="dot" />{' '}
+              {swiggy?.provider === 'swiggy'
+                ? swiggy.connected
+                  ? 'Swiggy · connected'
+                  : 'Swiggy'
+                : 'Instamart'}
+            </div>
           </div>
         </header>
 

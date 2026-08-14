@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Cookmate — offline</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: #fbf5ea;
+        color: #2a211a;
+        font-family: 'Hanken Grotesk', system-ui, sans-serif;
+        text-align: center;
+      }
+      .wrap { padding: 32px; }
+      .mark {
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        margin: 0 auto 18px;
+        background: linear-gradient(150deg, #f4a23e, #de4d2a);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 14px 34px -12px rgba(80, 48, 14, 0.2);
+      }
+      h1 { font-size: 22px; margin: 0 0 8px; }
+      p { color: #6b5d4f; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="mark">
+        <svg width="34" height="34" viewBox="0 0 24 24">
+          <circle cx="11" cy="13" r="6.6" fill="#fff" />
+          <circle cx="11" cy="13" r="3.3" fill="#f4a23e" />
+          <rect x="17" y="11.4" width="6.4" height="3.1" rx="1.5" fill="#fff" />
+        </svg>
+      </div>
+      <h1>You’re offline</h1>
+      <p>Cookmate needs internet to reach Instamart. Reconnect and pull to refresh.</p>
+    </div>
+  </body>
+</html>
