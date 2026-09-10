@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InvokeLunaIndiaProfile",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "arn:aws:bedrock:ap-south-1:<AWS_ACCOUNT_ID>:inference-profile/in.openai.gpt-5.6-luna"
+    },
+    {
+      "Sid": "InvokeLunaOnlyThroughIndiaProfile",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:ap-south-1::foundation-model/openai.gpt-5.6-luna",
+        "arn:aws:bedrock:ap-south-2::foundation-model/openai.gpt-5.6-luna"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": "arn:aws:bedrock:ap-south-1:<AWS_ACCOUNT_ID>:inference-profile/in.openai.gpt-5.6-luna"
+        }
+      }
+    }
+  ]
+}

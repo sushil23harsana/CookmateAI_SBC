@@ -1,0 +1,41 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadBedrockModelSelectorsInMumbai",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:ListFoundationModels",
+        "bedrock:GetFoundationModel",
+        "bedrock:GetFoundationModelAvailability",
+        "bedrock:ListFoundationModelAgreementOffers",
+        "bedrock:GetUseCaseForModelAccess",
+        "bedrock:ListInferenceProfiles",
+        "bedrock:GetInferenceProfile",
+        "bedrock:ListMarketplaceModelEndpoints",
+        "bedrock:ListProvisionedModelThroughputs",
+        "bedrock:ListCustomModels",
+        "bedrock:ListCustomModelDeployments",
+        "bedrock:ListImportedModels",
+        "bedrock:ListPromptRouters"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-south-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadPublicModelHubInMumbai",
+      "Effect": "Allow",
+      "Action": "sagemaker:ListHubContents",
+      "Resource": "arn:aws:sagemaker:ap-south-1:aws:hub/SageMakerPublicHub",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-south-1"
+        }
+      }
+    }
+  ]
+}

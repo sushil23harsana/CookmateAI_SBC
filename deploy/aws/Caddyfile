@@ -1,0 +1,11 @@
+{$COOKMATE_DOMAIN} {
+    @engine path /api/* /oauth/*
+    handle @engine {
+        reverse_proxy api:8787 {
+            flush_interval -1
+        }
+    }
+    handle {
+        reverse_proxy web:3000
+    }
+}

@@ -15,11 +15,14 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "test": "bun src/core/budget.test.ts && bun src/core/cart.test.ts && bun src/validation/schemas.test.ts && bun src/engine/executor.test.ts && bun src/llm/fallback.test.ts && bun src/server/swiggyOauth.test.ts",
-    "check": "bun run typecheck && bun run lint && bun run format:check && bun run test"
+    "test": "bun src/core/budget.test.ts && bun src/core/cart.test.ts && bun src/validation/schemas.test.ts && bun src/engine/executor.test.ts && bun src/llm/fallback.test.ts && bun src/server/swiggyOauth.test.ts && bun src/llm/bedrock.test.ts",
+    "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
+    "test:bedrock:live": "bun src/llm/bedrockSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1128.0",
+    "@aws-sdk/credential-providers": "^3.1128.0",
     "@hono/node-server": "^2.0.6",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@neondatabase/serverless": "^1.1.0",

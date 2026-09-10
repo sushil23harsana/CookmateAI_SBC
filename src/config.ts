@@ -15,9 +15,13 @@ const EnvSchema = z.object({
   // --- LLM selection + fallback ---
   // Primary brain. With BOTH keys set, the other provider becomes a live
   // fallback: credit/quota/auth failures switch the conversation over.
-  COOKMATE_LLM: z.enum(['anthropic', 'openai']).default('anthropic'),
+  COOKMATE_LLM: z.enum(['anthropic', 'openai', 'bedrock']).default('anthropic'),
   OPENAI_API_KEY: z.string().default(''),
   OPENAI_MODEL: z.string().min(1).default('gpt-5.1'),
+  AWS_REGION: z.string().min(1).default('ap-south-1'),
+  AWS_PROFILE: z.string().optional(),
+  BEDROCK_MODEL: z.string().min(1).default('in.openai.gpt-5.6-luna'),
+  BEDROCK_MAX_TOKENS: z.coerce.number().int().min(64).max(16000).default(4096),
 
   SWIGGY_MCP_URL: z.string().url().default('https://mcp.swiggy.com/im'),
   SWIGGY_MCP_TOKEN: z.string().default(''),
@@ -69,6 +73,10 @@ function load() {
     llm: e.COOKMATE_LLM,
     openaiApiKey: e.OPENAI_API_KEY,
     openaiModel: e.OPENAI_MODEL,
+    awsRegion: e.AWS_REGION,
+    awsProfile: e.AWS_PROFILE || undefined,
+    bedrockModel: e.BEDROCK_MODEL,
+    bedrockMaxTokens: e.BEDROCK_MAX_TOKENS,
     swiggyMcpUrl: e.SWIGGY_MCP_URL,
     swiggyMcpToken: e.SWIGGY_MCP_TOKEN,
     swiggyClientId: e.SWIGGY_CLIENT_ID,

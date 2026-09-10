@@ -1,5 +1,9 @@
 # Deploying Cookmate
 
+For the prepared AWS containers and Bedrock integration, see
+[the AWS deployment guide](deploy/aws/README.md). The instructions below describe
+the existing Render/Vercel deployment.
+
 Two pieces, two hosts (both free-tier friendly):
 
 | Piece | Host | Config |

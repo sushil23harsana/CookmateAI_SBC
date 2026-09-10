@@ -4,6 +4,7 @@ const nextConfig = {
   // Keeping the engine as a standalone service avoids bundling Node-only SDKs into
   // the Next build; it can be folded into route handlers later.
   reactStrictMode: true,
+  output: 'standalone',
   env: {
     // On Vercel builds, default the API base to the deployed engine so the app
     // works even if the dashboard env var is missing/mis-scoped. Local dev is

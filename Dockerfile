@@ -1,4 +1,4 @@
-# Cookmate engine API (Hono + Bun). The Next.js UI deploys separately (Vercel).
+# Cookmate engine API (Hono + Bun). Supports Render and the AWS Compose stack.
 FROM oven/bun:1-slim
 
 WORKDIR /app
@@ -9,6 +9,8 @@ RUN bun install --frozen-lockfile --production
 
 COPY tsconfig.json ./
 COPY src ./src
+RUN mkdir -p /app/data && chown bun:bun /app/data
+USER bun
 
 # Config comes from env vars (see .env.example); PORT is injected by the host.
 EXPOSE 8787

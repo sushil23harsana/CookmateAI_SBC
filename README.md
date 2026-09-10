@@ -59,6 +59,10 @@ terminal, and a WhatsApp surface can wrap it later.
 
 ## Run it
 
+Amazon Bedrock is also supported with `COOKMATE_LLM=bedrock` and AWS role/profile
+credentials. See [AWS setup](deploy/aws/README.md) for the local smoke test and
+prepared containers. Bedrock mode does not fall back to direct API billing.
+
 ```bash
 bun install && cd web && bun install && cd ..
 cp .env.example .env        # add your ANTHROPIC_API_KEY (and/or OPENAI_API_KEY)

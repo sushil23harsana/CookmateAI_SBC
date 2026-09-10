@@ -11,6 +11,7 @@ import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
 import { loadToken, saveToken, saveAddress } from './tokenRepo.js';
 import { SwiggyInstamartProvider } from '../instamart/swiggyMcp.js';
 import type { Cart } from '../types.js';
+import { primaryModelLabel, hasLlmFallback } from '../llm/factory.js';
 
 assertRuntimeConfig();
 
@@ -30,8 +31,8 @@ app.get('/api/health', (c) =>
     commit: (process.env.RENDER_GIT_COMMIT ?? 'dev').slice(0, 7),
     provider: config.provider,
     llm: config.llm,
-    model: config.llm === 'openai' ? config.openaiModel : config.model,
-    fallback: config.llm === 'openai' ? Boolean(config.anthropicApiKey) : Boolean(config.openaiApiKey),
+    model: primaryModelLabel(),
+    fallback: hasLlmFallback(),
     sessions: sessionCount(),
     uptimeSec: Math.round(process.uptime()),
   }),

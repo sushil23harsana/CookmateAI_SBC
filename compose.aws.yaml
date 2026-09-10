@@ -1,0 +1,60 @@
+name: cookmate
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env.aws
+    environment:
+      COOKMATE_LLM: bedrock
+      AWS_REGION: ap-south-1
+      AWS_PROFILE: ""
+      PORT: "8787"
+      TRUST_PROXY: "true"
+      CORS_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env.aws}
+      OAUTH_REDIRECT_URI: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env.aws}/oauth/callback
+    volumes:
+      - pantry:/app/data
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r = await fetch('http://127.0.0.1:8787/api/health'); if (!r.ok) process.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_BASE: ""
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      COOKMATE_DOMAIN: ${COOKMATE_DOMAIN:?Set COOKMATE_DOMAIN in .env.aws}
+    volumes:
+      - ./deploy/aws/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  pantry:
+  caddy_data:
+  caddy_config:
