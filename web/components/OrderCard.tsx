@@ -9,10 +9,11 @@ const STEPS = ['Confirmed', 'Packing', 'On the way', 'Delivered'];
 
 function stepIndex(status: string): number {
   const s = status.toUpperCase();
-  if (s.includes('DELIVER')) return 3;
-  if (s.includes('OUT') || s.includes('WAY')) return 2;
+  if (s.includes('CANCEL') || s.includes('FAIL') || s.includes('PENDING_PAYMENT')) return -1;
+  if (s.includes('OUT_FOR_DELIVERY') || s.includes('WAY') || s.includes('TRANSIT')) return 2;
+  if (s === 'DELIVERED' || s === 'ORDER_DELIVERED') return 3;
   if (s.includes('PACK')) return 1;
-  return 0;
+  return /CONFIRM|PLACED|ACCEPT/.test(s) ? 0 : -1;
 }
 
 export default function OrderCard({
@@ -24,13 +25,17 @@ export default function OrderCard({
 }) {
   const [status, setStatus] = useState(order.status);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const idx = stepIndex(status);
 
   const refresh = async () => {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
       setStatus(await onTrack());
+    } catch {
+      setError('Could not refresh the status. Try again or check your order in Swiggy.');
     } finally {
       setBusy(false);
     }
@@ -44,7 +49,7 @@ export default function OrderCard({
       transition={{ type: 'spring', stiffness: 240, damping: 24 }}
     >
       <div style={{ padding: '18px 18px 4px', textAlign: 'center' }}>
-        <div className="success-badge">
+        <div className="success-badge" hidden={idx < 0}>
           <div className="burst">
             {Array.from({ length: 9 }).map((_, i) => {
               const a = (i / 9) * Math.PI * 2;
@@ -71,7 +76,7 @@ export default function OrderCard({
           </svg>
         </div>
         <div className="card-title" style={{ fontSize: 22 }}>
-          Order confirmed
+          {idx >= 0 ? STEPS[idx] : status.replaceAll('_', ' ').toLowerCase()}
         </div>
         <div style={{ color: 'var(--ink-2)', fontSize: 14, marginTop: 4 }}>
           #{order.orderId}
@@ -89,6 +94,7 @@ export default function OrderCard({
       </div>
 
       <div className="card-foot">
+        {error ? <p role="status">{error}</p> : null}
         <button className="btn placed" onClick={refresh} disabled={busy}>
           {busy ? (
             <>

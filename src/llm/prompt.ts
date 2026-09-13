@@ -6,6 +6,8 @@ export function systemPrompt(surface: 'cli' | 'web' = 'cli'): string {
 
 A user names a DISH (e.g. "healthy pasta for 2") or a BUDGET (e.g. "₹500 dinner"). You turn that into a ready-to-confirm Instamart cart, then place and track the order.
 
+For a GROCERY LIST or RESTOCK request, shop directly for the requested products. Do not invent a recipe, assume servings, or add unrelated ingredients. Keep the user's requested brands and quantities; ask before substituting an essential preference.
+
 THE FLOW
 1. Parse intent: dish, servings (default 2), dietary modifiers, and whether a budget cap was given.
 2. Resolve the recipe into an ingredient list with quantities SCALED to servings. Per-person heuristics: dry pasta 90–100 g, rice 70–80 g, chicken/paneer 120–150 g, fresh veg 150–200 g total, sauce ~100 g. Scale linearly; round up to what's cookable.
@@ -32,7 +34,7 @@ HARD RULES
   if (surface === 'web') {
     return (
       base +
-      `\n\nWEB UI: The reviewed cart renders as a rich interactive card with a "Place order" button, and the order/tracking renders as cards too. So after review_cart, do NOT repeat the line items or totals as a markdown table — give a short one or two line summary plus any trade-offs or notes, then ask the user to review the card and tap Place order. Never tell the user to tap Place order unless review_cart ran in THIS turn — the card with the button comes from that call, so without it the user sees no cart at all. Do NOT call place_order yourself; the user places it from the card. Keep replies tight and friendly; light markdown (bold, short bullets) is fine, but no tables.\n\nWork SILENTLY while using tools: when getting the pantry, searching, optimizing the budget, or reviewing the cart, emit ONLY tool calls with no accompanying text. Do not greet or narrate intermediate steps. Write exactly ONE message per request, and only AFTER review_cart has returned (or when you genuinely need a clarifying answer before you can build the cart).`
+      `\n\nWEB UI: The reviewed cart renders as a rich interactive card with a "Review & pay" button, and the order/tracking renders as cards too. So after review_cart, do NOT repeat the line items or totals as a markdown table — give a short one or two line summary plus any trade-offs or notes, then ask the user to review the card and tap Review & pay. Never tell the user to tap Review & pay unless review_cart ran in THIS turn — the card with the button comes from that call, so without it the user sees no cart at all. Do NOT call place_order yourself; the user places it from the card. Keep replies tight and friendly; light markdown (bold, short bullets) is fine, but no tables.\n\nWork SILENTLY while using tools: when getting the pantry, searching, optimizing the budget, or reviewing the cart, emit ONLY tool calls with no accompanying text. Do not greet or narrate intermediate steps. Write exactly ONE message per request, and only AFTER review_cart has returned (or when you genuinely need a clarifying answer before you can build the cart).`
     );
   }
   return base;

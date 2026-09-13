@@ -13,16 +13,15 @@ import type { InstamartProvider } from '../instamart/provider.js';
 import type { Cart } from '../types.js';
 
 /**
- * One in-memory Session per browser tab: its own agent, cart store, provider, and
+ * One in-memory Session per browser resume credential: agent, cart store, provider, and
  * an event bus the chat SSE stream subscribes to for live phase + cart events.
- * (Production would persist this per authenticated user; in-memory is fine for v1.)
+ * Session and cart state are local to one API process.
  */
 export interface Session {
   id: string;
   /**
-   * Anonymous durable id from the browser (random uuid in localStorage — no
-   * PII). Keys the persisted Swiggy token, so a returning user is still
-   * connected after this in-memory session is long gone.
+   * Server-computed hash of the separate browser resume credential. The public
+   * legacy userId is never used to restore a connection.
    */
   userId?: string;
   provider: InstamartProvider;
@@ -55,6 +54,7 @@ export interface Session {
   swiggyTokenExpiresAt?: number;
   /** The saved Swiggy address the user picked — availability and prices follow it. */
   swiggyAddressId?: string;
+  returnTo?: string;
   createdAt: number;
   lastSeenAt: number;
 }
@@ -72,6 +72,11 @@ const PHASE: Record<string, string> = {
 };
 
 export function createSession(userId?: string): Session {
+  if (userId) {
+    for (const session of sessions.values()) {
+      if (session.userId === userId) return session;
+    }
+  }
   evictIfFull();
   const id = randomUUID();
   const carts = new CartStore();
@@ -134,6 +139,18 @@ export function getSession(id: string): Session | undefined {
   const s = sessions.get(id);
   if (s) s.lastSeenAt = Date.now();
   return s;
+}
+
+export function disconnectSessions(userId: string | undefined, sessionId: string): void {
+  for (const [id, session] of sessions) {
+    if (id === sessionId || (userId && session.userId === userId)) {
+      session.swiggyToken = undefined;
+      session.swiggyTokenExpiresAt = undefined;
+      session.carts.clear();
+      sessions.delete(id);
+      void session.provider.close().catch(() => {});
+    }
+  }
 }
 
 export function sessionCount(): number {

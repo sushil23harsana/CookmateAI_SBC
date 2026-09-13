@@ -31,6 +31,8 @@ export function computeCart(items: Sku[], opts: CartOptions): Cart {
   const lines: CartLine[] = [...byId.values()].map(({ sku, qty }) => ({
     id: sku.id,
     name: sku.name,
+    brand: sku.brand,
+    packSize: sku.packSize,
     price: sku.price,
     qty,
     lineTotal: round(sku.price * qty),
@@ -84,5 +86,9 @@ export class CartStore {
 
   get(cartId: string): Cart | undefined {
     return this.carts.get(cartId);
+  }
+
+  clear(): void {
+    this.carts.clear();
   }
 }

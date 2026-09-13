@@ -135,6 +135,8 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const minOrderValue = deps.minOrderValue ?? config.minOrderValue;
   const maxOrderValue = deps.maxOrderValue ?? config.maxOrderValue;
   const placedByCart = new Map<string, OrderResult>(); // idempotency: one order per cart
+  const ordering = new Set<string>();
+  const uncertain = new Set<string>();
 
   async function dispatch(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
@@ -154,21 +156,29 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       }
       case 'review_cart': {
         const { sku_ids } = parseOrThrow(ReviewCartInput, input, 'review_cart');
-        // Providers may dedupe ids, but a repeated id means qty > 1 — fetch
-        // unique items, then expand back to the requested multiset.
-        const items = await provider.getItems([...new Set(sku_ids)]);
+        // Repeated ids carry quantity into the provider's bill. Returned product
+        // metadata may be deduplicated, so expand that metadata locally afterwards.
+        const items = await provider.getItems(sku_ids);
         const byId = new Map(items.map((i) => [i.id, i]));
         const missing = sku_ids.filter((id) => !byId.has(id));
+        if (missing.length || items.some((item) => !item.inStock)) {
+          carts.clear();
+          return JSON.stringify({
+            error: 'Some items are unavailable. Search for replacements and review the basket again.',
+            missing,
+          });
+        }
         const expanded = sku_ids.flatMap((id) => byId.get(id) ?? []);
         const cart = computeCart(expanded, { deliveryFee, minOrderValue });
         // When the provider returned its own bill for this exact cart, that is
         // the truth the user will be charged — our flat fee is only a fallback.
         const bill = provider.lastBill?.();
-        if (bill?.toPay !== undefined && bill.toPay > 0 && expanded.length > 0) {
+        if (bill?.toPay !== undefined && bill.toPay >= 0 && expanded.length > 0) {
           cart.total = bill.toPay;
           cart.fees = Math.max(0, Math.round((bill.toPay - cart.itemsTotal) * 100) / 100);
           if (bill.lines.length > 0) cart.bill = bill.lines;
         }
+        carts.clear();
         carts.put(cart);
         deps.onCartReviewed?.(cart);
         return JSON.stringify({ cart, missing });
@@ -188,21 +198,40 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         }
         const already = placedByCart.get(cart_id);
         if (already) return JSON.stringify({ placed: true, idempotentReplay: true, order: already });
+        if (ordering.has(cart_id) || uncertain.has(cart_id)) {
+          return JSON.stringify({
+            placed: false,
+            error: 'This order is processing or its result is uncertain. Check Swiggy before trying again.',
+          });
+        }
+        if (Date.now() - cart.createdAt > 10 * 60_000 || cart.belowMinOrderValue) {
+          return JSON.stringify({
+            placed: false,
+            error: 'This basket has expired or is below the minimum. Review it again before ordering.',
+          });
+        }
 
         assertWithinSpendLimit(cart, maxOrderValue); // throws SpendLimitError -> tool error
 
-        const ok = await deps.confirmOrder(cart);
-        if (!ok) return JSON.stringify({ placed: false, reason: 'User declined at the confirm gate.' });
+        ordering.add(cart_id);
+        try {
+          const ok = await deps.confirmOrder(cart);
+          if (!ok) return JSON.stringify({ placed: false, reason: 'User declined at the confirm gate.' });
 
-        const order = await provider.placeOrder(cartSkuIds(cart), cart.total, cart.cartId, payment);
-        placedByCart.set(cart_id, order);
-        deps.onOrderPlaced?.(order, cart);
-        logger.info('order placed', {
-          orderId: order.orderId,
-          total: cart.total,
-          pendingPayment: order.pendingPayment ?? false,
-        });
-        return JSON.stringify({ placed: true, order });
+          uncertain.add(cart_id);
+          const order = await provider.placeOrder(cartSkuIds(cart), cart.total, cart.cartId, payment);
+          placedByCart.set(cart_id, order);
+          uncertain.delete(cart_id);
+          deps.onOrderPlaced?.(order, cart);
+          logger.info('order placed', {
+            orderId: order.orderId,
+            total: cart.total,
+            pendingPayment: order.pendingPayment ?? false,
+          });
+          return JSON.stringify({ placed: true, order });
+        } finally {
+          ordering.delete(cart_id);
+        }
       }
       default:
         return JSON.stringify({ error: `unknown tool ${name}` });

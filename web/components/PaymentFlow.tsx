@@ -14,11 +14,11 @@ type Stage =
 function failureText(status: string): string {
   switch (status) {
     case 'failed':
-      return 'The payment was declined — nothing was charged, or a refund is on its way.';
+      return 'The payment failed. Check the payment and any refund status in Swiggy before retrying.';
     case 'refund-initiated':
       return 'The debit was reversed and a refund is underway. The order was not placed.';
     case 'cancelled':
-      return 'The order was cancelled. Any charge will be refunded.';
+      return 'The order was cancelled. Check Swiggy for any charge or refund details.';
     case 'cart_changed':
       return 'The cart changed during payment, so the order was not placed — review it and try again.';
     default:
@@ -39,6 +39,12 @@ export default function PaymentFlow({
   onPlaced,
   onFailedText,
   onClose,
+  initialOrder,
+  initialUncertain,
+  address,
+  onPending,
+  onAttempt,
+  onTerminal,
 }: {
   sessionId: string;
   cart: Cart;
@@ -46,28 +52,74 @@ export default function PaymentFlow({
   onPlaced: (order: OrderResult) => void;
   onFailedText: (message: string) => void;
   onClose: () => void;
+  initialOrder?: OrderResult;
+  initialUncertain?: boolean;
+  address?: string;
+  onPending: (order: OrderResult) => void;
+  onAttempt: () => void;
+  onTerminal: () => void;
 }) {
-  const [stage, setStage] = useState<Stage>({ kind: 'choose' });
+  const [stage, setStage] = useState<Stage>(
+    initialOrder
+      ? { kind: 'pending', order: initialOrder, qr: false }
+      : initialUncertain
+        ? {
+            kind: 'error',
+            message:
+              'The previous checkout result needs checking. Check your orders in Swiggy before starting another order.',
+          }
+        : { kind: 'choose' },
+  );
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   // On a phone you can't scan a QR you're displaying — the UPI app buttons are
   // the mobile path, so hide the QR option there (unless it's the only UPI way).
   const [touchDevice, setTouchDevice] = useState(false);
   useEffect(() => setTouchDevice(window.matchMedia('(pointer: coarse)').matches), []);
   const stopRef = useRef(false);
-  useEffect(
-    () => () => {
+  const pollGeneration = useRef(0);
+  const payingRef = useRef(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    stopRef.current = false;
+    return () => {
       stopRef.current = true;
-    },
-    [],
-  );
+      pollGeneration.current++;
+    };
+  }, []);
+
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    sheetRef.current?.focus();
+    return () => previous?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (initialOrder) void poll(initialOrder);
+    // A restored payment is checked, never submitted a second time.
+  }, []);
 
   const pay = async (payment?: api.PaymentChoice) => {
+    if (payingRef.current) return;
+    payingRef.current = true;
+    try {
+      onAttempt();
+    } catch {
+      setStage({
+        kind: 'error',
+        message:
+          'Your browser could not save the checkout state. Enable site storage before ordering. No order was submitted.',
+      });
+      return;
+    }
     setStage({ kind: 'placing' });
     let res: Awaited<ReturnType<typeof api.placeOrder>>;
     try {
       res = await api.placeOrder(sessionId, cart.cartId, payment);
     } catch {
-      setStage({ kind: 'error', message: 'Could not reach the kitchen — try again in a moment.' });
+      setStage({
+        kind: 'error',
+        message: 'We could not confirm the checkout result. Check your Swiggy orders before trying again.',
+      });
       return;
     }
     if (!res.placed || !res.order) {
@@ -77,8 +129,21 @@ export default function PaymentFlow({
       return;
     }
     const order = res.order;
-    if (!order.pendingPayment || !order.paasId) {
+    if (!order.pendingPayment) {
       onPlaced(order); // COD (or instantly-confirmed) — done.
+      return;
+    }
+    try {
+      onPending(order);
+    } catch {
+      /* the pre-checkout uncertainty marker remains saved */
+    }
+    if (!order.paasId) {
+      setStage({
+        kind: 'error',
+        message:
+          'This order is awaiting payment, but Swiggy did not return a tracking reference. Check the order in Swiggy before retrying.',
+      });
       return;
     }
     const qr = payment?.qr === true;
@@ -94,17 +159,28 @@ export default function PaymentFlow({
   };
 
   const poll = async (order: OrderResult) => {
+    if (!order.paasId) {
+      setStage({
+        kind: 'error',
+        message:
+          'Swiggy did not return a payment tracking reference. Check this order in Swiggy before retrying.',
+      });
+      return;
+    }
+    const generation = ++pollGeneration.current;
     const started = Date.now();
     const interval = Math.max(order.pollingIntervalInMs ?? 5000, 4000);
     const maxMs = Math.min(order.maxTimeToPollForInMs ?? 300000, 300000);
-    while (!stopRef.current && Date.now() - started < maxMs) {
+    while (!stopRef.current && generation === pollGeneration.current && Date.now() - started < maxMs) {
       try {
         const st = await api.paymentStatus(sessionId, order.paasId ?? '', order.orderId);
-        if (st.confirmed || st.status === 'success' || st.status === 'paid') {
+        if (stopRef.current || generation !== pollGeneration.current) return;
+        if (st.confirmed) {
           onPlaced({ ...order, status: st.orderStatus ?? 'CONFIRMED', pendingPayment: false });
           return;
         }
-        if (st.terminal) {
+        if (st.terminal && !['paid', 'success'].includes(st.status)) {
+          onTerminal();
           setStage({ kind: 'error', message: failureText(st.status) });
           return;
         }
@@ -113,10 +189,11 @@ export default function PaymentFlow({
       }
       await new Promise((r) => setTimeout(r, interval));
     }
-    if (stopRef.current) return;
+    if (stopRef.current || generation !== pollGeneration.current) return;
     // Window exhausted with payment still pending — one idempotent confirm try.
     try {
       const st = await api.paymentConfirm(sessionId, order.orderId, order.paasId ?? '');
+      if (stopRef.current || generation !== pollGeneration.current) return;
       if (st.confirmed) {
         onPlaced({ ...order, status: 'CONFIRMED', pendingPayment: false });
         return;
@@ -131,28 +208,94 @@ export default function PaymentFlow({
   };
 
   return (
-    <div className="paysheet-backdrop" role="dialog" aria-modal="true" aria-label="Choose how to pay">
-      <div className="paysheet">
+    <div
+      className="paysheet-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Review your order and payment"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && stage.kind !== 'placing') {
+          event.preventDefault();
+          onClose();
+        }
+        if (event.key === 'Tab') {
+          const elements = sheetRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]');
+          if (!elements?.length) {
+            event.preventDefault();
+            return;
+          }
+          const first = elements[0],
+            last = elements[elements.length - 1];
+          if (
+            event.shiftKey &&
+            (document.activeElement === first || document.activeElement === sheetRef.current)
+          ) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }}
+    >
+      <div className="paysheet" ref={sheetRef} tabIndex={-1}>
         {stage.kind === 'choose' ? (
           <>
-            <div className="paysheet-title">Pay ₹{cart.total}</div>
-            <div className="paysheet-sub">Cash on delivery, or pay now with UPI.</div>
+            <div className="eyebrow">ONE LAST LOOK</div>
+            <div className="paysheet-title">Your order, ready to go.</div>
+            {address ? (
+              <div className="payment-address">
+                <strong>Deliver to</strong>
+                <p>{address}</p>
+              </div>
+            ) : null}
+            <div className="payment-review">
+              {cart.lines.map((line) => (
+                <div key={line.id}>
+                  <span>
+                    {line.qty} × {line.name.replace(/^\[DEMO\]\s*/, '')}
+                  </span>
+                  <strong>₹{line.lineTotal}</strong>
+                </div>
+              ))}
+              {cart.bill?.length ? (
+                cart.bill.map((line) => (
+                  <div key={line.label}>
+                    <span>{line.label}</span>
+                    <strong>₹{line.amount}</strong>
+                  </div>
+                ))
+              ) : (
+                <div>
+                  <span>Delivery & fees</span>
+                  <strong>₹{cart.fees}</strong>
+                </div>
+              )}
+              <div className="payment-total">
+                <span>Total to pay</span>
+                <strong>₹{cart.total}</strong>
+              </div>
+            </div>
+            <div className="paysheet-sub">Choose a payment method to place this order.</div>
             <div className="paysheet-options">
-              <button className="paybtn" onClick={() => void pay()}>
-                💵 Cash on Delivery
-              </button>
+              {options.codAvailable ? (
+                <button className="paybtn" onClick={() => void pay({ method: 'cod' })}>
+                  Place order · ₹{cart.total} cash on delivery
+                </button>
+              ) : null}
               {options.upiApps.map((a) => (
                 <button
                   key={a.id}
                   className="paybtn"
                   onClick={() => void pay({ method: 'upi', intentApp: a.id })}
                 >
-                  📲 {a.label}
+                  Pay ₹{cart.total} with {a.label}
                 </button>
               ))}
               {options.qrAvailable && !(touchDevice && options.upiApps.length > 0) ? (
                 <button className="paybtn" onClick={() => void pay({ method: 'upi', qr: true })}>
-                  🔳 Scan a UPI QR
+                  Pay ₹{cart.total} with a UPI QR
                 </button>
               ) : null}
             </div>
@@ -187,8 +330,8 @@ export default function PaymentFlow({
               </a>
             ) : (
               <div className="paysheet-sub">
-                Swiggy didn’t send a payment link — open the Swiggy app to finish paying, or close this and
-                try another method.
+                Swiggy didn’t send a payment link. Open the Swiggy app to check this order before trying
+                another payment.
               </div>
             )}
             <div className="paysheet-sub">
@@ -202,7 +345,7 @@ export default function PaymentFlow({
 
         {stage.kind === 'error' ? (
           <>
-            <div className="paysheet-title">Payment didn’t go through</div>
+            <div className="paysheet-title">Check your order</div>
             <div className="paysheet-sub">{stage.message}</div>
             <button className="paysheet-cancel" onClick={onClose}>
               Close

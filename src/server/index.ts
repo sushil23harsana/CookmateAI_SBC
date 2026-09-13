@@ -6,9 +6,16 @@ import { secureHeaders } from 'hono/secure-headers';
 import { config, assertRuntimeConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { rateLimit } from './rateLimit.js';
-import { createSession, getSession, sessionCount, sweepExpiredSessions } from './sessions.js';
+import {
+  createSession,
+  disconnectSessions,
+  getSession,
+  sessionCount,
+  sweepExpiredSessions,
+} from './sessions.js';
 import { beginAuthorization, completeAuthorization } from './swiggyOauth.js';
-import { loadToken, saveToken, saveAddress } from './tokenRepo.js';
+import { deleteToken, loadToken, saveToken, saveAddress } from './tokenRepo.js';
+import { resumeIdentity, verifyConnection } from './access.js';
 import { SwiggyInstamartProvider } from '../instamart/swiggyMcp.js';
 import type { Cart } from '../types.js';
 
@@ -17,11 +24,21 @@ assertRuntimeConfig();
 // Origin headers never carry a trailing slash — strip it so a pasted URL still matches.
 const allowedOrigins = config.corsOrigin.split(',').map((s) => s.trim().replace(/\/+$/, ''));
 
-const app = new Hono();
+export const app = new Hono();
 
 // Security headers + CORS locked to the configured frontend origin(s).
 app.use('/api/*', secureHeaders());
+app.use('/api/*', async (c, next) => {
+  c.header('Referrer-Policy', 'no-referrer');
+  await next();
+  c.header('Cache-Control', 'no-store');
+});
 app.use('/api/*', cors({ origin: allowedOrigins, maxAge: 600 }));
+app.use('/oauth/*', async (c, next) => {
+  c.header('Referrer-Policy', 'no-referrer');
+  c.header('Cache-Control', 'no-store');
+  await next();
+});
 
 // Health is intentionally registered BEFORE the rate limiter so monitors aren't throttled.
 app.get('/api/health', (c) =>
@@ -41,10 +58,9 @@ app.get('/api/health', (c) =>
 app.use('/api/*', rateLimit({ limit: config.rateLimitPerMin, trustProxy: config.trustProxy }));
 
 app.post('/api/session', async (c) => {
-  const body = await readJson<{ userId?: unknown }>(c);
-  // Anonymous durable id from the browser — shape-checked, never trusted further.
-  const userId =
-    typeof body?.userId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.userId) ? body.userId : undefined;
+  const body = await readJson<{ resumeToken?: unknown }>(c);
+  const identity = resumeIdentity(body?.resumeToken);
+  const userId = identity.key;
   const s = createSession(userId);
   // Returning user: restore their persisted Swiggy connection onto the new session.
   if (userId) {
@@ -55,23 +71,98 @@ app.post('/api/session', async (c) => {
       s.swiggyAddressId = saved.addressId;
     }
   }
-  return c.json({ sessionId: s.id });
+  return c.json({ sessionId: s.id, resumeToken: identity.token });
 });
 
 /** Whether THIS session's user has connected a Swiggy account (never the token itself). */
-app.get('/api/swiggy/status', (c) => {
+app.get('/api/swiggy/status', async (c) => {
   const sessionId = c.req.query('sessionId');
   const session = sessionId ? getSession(sessionId) : undefined;
+  let connected: boolean;
+  try {
+    connected = session ? await verifyConnection(session) : false;
+  } catch {
+    return c.json({ error: 'Could not verify your Swiggy connection. Try again.' }, 503);
+  }
   return c.json({
     provider: config.provider,
     // known=false tells the client its saved session died (restart/TTL) — it
     // then mints a fresh one, which restores any persisted connection.
     known: Boolean(session),
-    connected: Boolean(session?.swiggyToken),
+    connected: config.provider === 'swiggy' && connected,
+    chatAllowed: connected,
     expiresAt: session?.swiggyTokenExpiresAt
       ? new Date(session.swiggyTokenExpiresAt).toISOString()
       : undefined,
   });
+});
+
+app.post('/api/swiggy/disconnect', async (c) => {
+  const body = await readJson<{ sessionId?: string }>(c);
+  const session = body?.sessionId ? getSession(body.sessionId) : undefined;
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  if (session.busy)
+    return c.json({ error: 'Wait for the current action to finish before disconnecting.' }, 409);
+  try {
+    if (session.userId) await deleteToken(session.userId);
+  } catch {
+    return c.json({ error: 'Could not remove the saved connection. Please retry.' }, 503);
+  }
+  disconnectSessions(session.userId, session.id);
+  return c.json({ ok: true });
+});
+
+// The UI lock is only a convenience. All shopping endpoints enforce access here.
+app.use('/api/*', async (c, next) => {
+  const body =
+    c.req.method === 'POST'
+      ? ((await c.req.raw
+          .clone()
+          .json()
+          .catch(() => null)) as { sessionId?: string } | null)
+      : null;
+  const id = body?.sessionId ?? c.req.query('sessionId');
+  const session = id ? getSession(id) : undefined;
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  // Lock mutations BEFORE the first network await. Chat owns its streaming lock.
+  const mutation = ['/api/cart', '/api/order', '/api/swiggy/address', '/api/shop/reset'].includes(c.req.path);
+  if (session.busy && (mutation || c.req.path === '/api/chat')) {
+    return c.json({ error: 'Finishing your last action. Please wait a moment.' }, 409);
+  }
+  if (mutation || c.req.path === '/api/chat') session.busy = true;
+  try {
+    if (!(await verifyConnection(session))) {
+      if (c.req.path === '/api/chat') session.busy = false;
+      return c.json(
+        { error: 'Connect Swiggy before chatting or shopping.', code: 'CONNECTION_REQUIRED' },
+        401,
+      );
+    }
+    await next();
+    if (c.req.path === '/api/chat' && c.res.status !== 200) session.busy = false;
+  } catch {
+    if (c.req.path === '/api/chat') session.busy = false;
+    return c.json(
+      {
+        error: 'Could not verify Swiggy access. Reconnect or try again shortly.',
+        code: 'CONNECTION_CHECK_FAILED',
+      },
+      503,
+    );
+  } finally {
+    if (mutation) session.busy = false;
+  }
+});
+
+app.post('/api/shop/reset', async (c) => {
+  const body = await readJson<{ sessionId?: string }>(c);
+  const session = body?.sessionId ? getSession(body.sessionId) : undefined;
+  if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  session.carts.clear();
+  session.lastCartId = undefined;
+  session.manualSkuIds = undefined;
+  session.agent.seed([]);
+  return c.json({ ok: true });
 });
 
 /**
@@ -114,10 +205,10 @@ app.get('/api/payment/options', async (c) => {
   try {
     return c.json(await session.provider.getPaymentOptions());
   } catch (err) {
-    logger.warn('payment options failed — offering COD only', {
+    logger.warn('payment options failed', {
       message: err instanceof Error ? err.message : String(err),
     });
-    return c.json(codOnly);
+    return c.json({ error: 'Could not load payment methods. Please retry before placing an order.' }, 502);
   }
 });
 
@@ -181,6 +272,15 @@ app.post('/api/swiggy/address', async (c) => {
   }
   const session = getSession(body.sessionId);
   if (!session) return c.json({ error: 'unknown or expired session' }, 404);
+  const addresses = await session.provider.listAddresses?.();
+  if (!addresses?.some((address) => address.id === body.addressId)) {
+    return c.json({ error: 'Choose a saved Swiggy address.' }, 400);
+  }
+  if (session.swiggyAddressId !== body.addressId) {
+    session.carts.clear();
+    session.lastCartId = undefined;
+    session.manualSkuIds = undefined;
+  }
   session.swiggyAddressId = body.addressId;
   // Fire-and-forget: an explicit pick should survive restarts alongside the token.
   if (session.userId) void saveAddress(session.userId, body.addressId);
@@ -201,9 +301,6 @@ app.post('/api/chat', async (c) => {
   }
   const session = sessionId ? getSession(sessionId) : undefined;
   if (!session) return c.json({ error: 'unknown or expired session' }, 404);
-  if (session.busy) {
-    return c.json({ error: 'Still working on your last message — one at a time, please.' }, 409);
-  }
   session.busy = true;
 
   return streamSSE(c, async (stream) => {
@@ -236,7 +333,7 @@ app.post('/api/chat', async (c) => {
       // "Place order" button without having called review_cart — in which case
       // no cart card exists in the UI and nothing was actually changed. Force
       // exactly one corrective re-review; the prompt rule alone is probabilistic.
-      if (!cartSeenThisTurn && /place order/i.test(text)) {
+      if (!cartSeenThisTurn && /place order|review\s*(?:&|and)\s*pay/i.test(text)) {
         logger.warn('reply referenced Place order without a reviewed cart — nudging re-review');
         // Tell the UI a cart rebuild is starting so it closes the streamed bubble
         // cleanly — otherwise the nudged reply's text can merge into the first one.
@@ -287,9 +384,6 @@ app.post('/api/cart', async (c) => {
   }
   const session = getSession(body.sessionId);
   if (!session) return c.json({ error: 'unknown or expired session' }, 404);
-  if (session.busy) {
-    return c.json({ error: 'Still working on your last message — try once the reply lands.' }, 409);
-  }
   try {
     const res = await session.execute('review_cart', { sku_ids: skuIds });
     const parsed = JSON.parse(res.result) as { cart?: Cart };
@@ -316,6 +410,8 @@ app.get('/oauth/start', async (c) => {
     );
   }
   try {
+    const returnTo = c.req.query('returnTo');
+    if (returnTo && allowedOrigins.includes(returnTo)) session.returnTo = returnTo;
     return c.redirect(await beginAuthorization(session.id));
   } catch (err) {
     logger.error('could not begin Swiggy authorization', err);
@@ -361,6 +457,7 @@ app.get('/oauth/callback', async (c) => {
     // Fire-and-forget: persistence must never block or fail the connect flow.
     if (session.userId) void saveToken(session.userId, accessToken, session.swiggyTokenExpiresAt);
     logger.info('swiggy account connected to session', { sessionId });
+    if (session.returnTo && allowedOrigins.includes(session.returnTo)) return c.redirect(session.returnTo);
     return c.html(
       oauthPage(
         'Swiggy connected ✅',
@@ -387,7 +484,14 @@ function oauthPage(title: string, body: string): string {
 <body style="margin:0;display:grid;place-items:center;min-height:100vh;font-family:system-ui,sans-serif;background:#fff8ef;color:#3b2f24">
 <div style="text-align:center;padding:32px;max-width:420px">
 <div style="font-size:40px">🍳</div><h1 style="font-size:20px;margin:12px 0 8px">${title}</h1>
-<p style="margin:0;color:#8a7a66">${body}</p></div></body>`;
+<p style="margin:0;color:#8a7a66">${body}</p><p><a href="${escapeHtml(allowedOrigins[0] ?? '/')}">Return to Cookmate</a></p></div></body>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
+  );
 }
 
 /** The confirm gate as a UI action: tapping "Place order" arms the one-shot gate. */
@@ -401,6 +505,23 @@ app.post('/api/order', async (c) => {
   const session = getSession(body.sessionId);
   if (!session) return c.json({ error: 'unknown or expired session' }, 404);
 
+  if (session.lastCartId !== body.cartId) {
+    return c.json({ error: 'This basket was updated. Review the latest basket before ordering.' }, 409);
+  }
+  if (body.payment?.method && !['upi', 'cod'].includes(String(body.payment.method))) {
+    return c.json({ error: 'Choose an available payment method.' }, 400);
+  }
+  if (session.provider.getPaymentOptions) {
+    const options = await session.provider.getPaymentOptions();
+    const valid =
+      body.payment?.method === 'upi'
+        ? typeof body.payment.intentApp === 'string'
+          ? options.upiApps.some((a) => a.id === body.payment?.intentApp)
+          : options.qrAvailable
+        : options.codAvailable;
+    if (!valid)
+      return c.json({ error: 'That payment method is unavailable. Review payment options again.' }, 400);
+  }
   // The payment choice comes from the order UI, never the model; malformed
   // input degrades to COD (the safe default) rather than erroring the gate.
   const payment =
@@ -444,26 +565,28 @@ async function readJson<T>(c: { req: { json: () => Promise<unknown> } }): Promis
   }
 }
 
-const server = serve({ fetch: app.fetch, port: config.port }, () => {
-  logger.info(`Cookmate server on http://localhost:${config.port}`, {
-    provider: config.provider,
-    cors: allowedOrigins,
-    rateLimitPerMin: config.rateLimitPerMin,
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('/server/index.ts')) {
+  const server = serve({ fetch: app.fetch, port: config.port }, () => {
+    logger.info(`Cookmate server on http://localhost:${config.port}`, {
+      provider: config.provider,
+      cors: allowedOrigins,
+      rateLimitPerMin: config.rateLimitPerMin,
+    });
   });
-});
 
-// Reap idle sessions so memory stays bounded.
-const sweep = setInterval(() => {
-  const n = sweepExpiredSessions();
-  if (n > 0) logger.info('reaped idle sessions', { count: n });
-}, 60_000);
-sweep.unref?.();
+  // Reap idle sessions so memory stays bounded.
+  const sweep = setInterval(() => {
+    const n = sweepExpiredSessions();
+    if (n > 0) logger.info('reaped idle sessions', { count: n });
+  }, 60_000);
+  sweep.unref?.();
 
-function shutdown(signal: string): void {
-  logger.info('shutting down', { signal });
-  clearInterval(sweep);
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  function shutdown(signal: string): void {
+    logger.info('shutting down', { signal });
+    clearInterval(sweep);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));

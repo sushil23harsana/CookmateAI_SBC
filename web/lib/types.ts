@@ -3,6 +3,8 @@
 export interface CartLine {
   id: string;
   name: string;
+  brand?: string;
+  packSize?: string;
   price: number;
   qty: number;
   lineTotal: number;

@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Cart } from '@/lib/types';
 
 export const cleanName = (n: string) => n.replace(/^\[DEMO\]\s*/, '');
@@ -37,38 +37,27 @@ export function emojiFor(name: string): string {
   return '🛒';
 }
 
-function useCountUp(target: number): number {
-  const [v, setV] = useState(0);
-  useEffect(() => {
-    let raf = 0;
-    const start = performance.now();
-    const dur = 650;
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / dur);
-      setV(Math.round(target * (1 - Math.pow(1 - t, 3))));
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [target]);
-  return v;
-}
-
 export default function CartCard({
   cart,
   ordered,
   onPlace,
+  active = true,
+  busy = false,
+  demo = false,
 }: {
   cart: Cart;
   ordered: boolean;
   onPlace: () => Promise<void>;
+  active?: boolean;
+  busy?: boolean;
+  demo?: boolean;
 }) {
   const [placing, setPlacing] = useState(false);
-  const total = useCountUp(cart.total);
+  const total = cart.total;
   const count = cart.lines.reduce((s, l) => s + l.qty, 0);
 
   const place = async () => {
-    if (placing || ordered) return;
+    if (placing || ordered || busy || !active) return;
     setPlacing(true);
     try {
       await onPlace();
@@ -104,6 +93,10 @@ export default function CartCard({
             <div className="ln">
               {cleanName(l.name)}
               {l.qty > 1 ? <span className="lqty">×{l.qty}</span> : null}
+              <small className="product-meta">
+                {[l.brand, l.packSize].filter(Boolean).join(' · ')}
+                {l.packSize ? ' · ' : ''}₹{l.price} each
+              </small>
             </div>
             <div className="lp">₹{l.lineTotal}</div>
           </motion.div>
@@ -146,18 +139,28 @@ export default function CartCard({
       ) : null}
 
       <div className="card-foot">
-        <button className={`btn ${ordered ? 'placed' : ''}`} onClick={place} disabled={placing || ordered}>
+        <button
+          className={`btn ${ordered ? 'placed' : ''}`}
+          onClick={place}
+          disabled={placing || ordered || busy || !active || cart.belowMinOrderValue}
+        >
           {ordered ? (
             <>✓ Order placed</>
+          ) : !active ? (
+            <>Earlier basket · review the latest</>
           ) : placing ? (
             <>
-              <span className="spinner" /> Placing…
+              <span className="spinner" /> Loading payment options…
             </>
           ) : (
-            <>Place order · ₹{cart.total}</>
+            <>Review & pay · ₹{cart.total}</>
           )}
         </button>
-        <div className="note">Sample catalogue · nothing is bought until you tap Place order</div>
+        <div className="note">
+          {demo
+            ? 'Demo catalogue · no real order'
+            : 'Swiggy Instamart · choose a payment method before ordering'}
+        </div>
       </div>
     </motion.div>
   );

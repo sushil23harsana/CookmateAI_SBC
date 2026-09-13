@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Cart } from '@/lib/types';
 import { cleanName, emojiFor } from './CartCard';
@@ -23,13 +23,16 @@ export default function CartDock({
   onChangeQty: (skuId: string, qty: number) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    setOpen(window.matchMedia('(min-width: 701px)').matches);
+  }, []);
   const [placing, setPlacing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const count = cart.lines.reduce((s, l) => s + l.qty, 0);
   const locked = busy || placing || updating;
 
   const place = async () => {
-    if (placing) return;
+    if (locked) return;
     setPlacing(true);
     try {
       await onPlace(cart);
@@ -63,12 +66,17 @@ export default function CartDock({
               {cart.lines.map((l) => (
                 <div key={l.id} className="line">
                   <div className="lc">{emojiFor(l.name)}</div>
-                  <div className="ln">{cleanName(l.name)}</div>
+                  <div className="ln">
+                    {cleanName(l.name)}
+                    <small className="product-meta">
+                      {l.packSize ? `${l.packSize} · ` : ''}₹{l.price} each
+                    </small>
+                  </div>
                   <div className="qty">
                     <button
                       className="qbtn"
                       aria-label={`One less ${cleanName(l.name)}`}
-                      disabled={locked || (cart.lines.length === 1 && l.qty === 1)}
+                      disabled={locked}
                       onClick={() => void step(l.id, l.qty - 1)}
                     >
                       −
@@ -77,7 +85,7 @@ export default function CartDock({
                     <button
                       className="qbtn"
                       aria-label={`One more ${cleanName(l.name)}`}
-                      disabled={locked}
+                      disabled={locked || count >= 100}
                       onClick={() => void step(l.id, l.qty + 1)}
                     >
                       +
@@ -112,42 +120,36 @@ export default function CartDock({
         ) : null}
       </AnimatePresence>
 
-      <div
-        className="cartbar"
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        aria-label={open ? 'Collapse the cart' : 'Expand the cart to review items'}
-        onClick={() => setOpen((o) => !o)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setOpen((o) => !o);
-          }
-        }}
-      >
-        <div className="cartbar-info">
-          <svg className="chev" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-            <path
-              d="M3.5 10 8 5.5 12.5 10"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          🧺 {count} item{count === 1 ? '' : 's'} · <strong>₹{updating ? '…' : cart.total}</strong>
-        </div>
+      <div className="cartbar">
+        <button
+          className="cartbar-toggle"
+          aria-expanded={open}
+          aria-label={open ? 'Collapse the cart' : 'Expand the cart to review items'}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span className="cartbar-info">
+            <svg className="chev" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M3.5 10 8 5.5 12.5 10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            🧺 {count} item{count === 1 ? '' : 's'} · <strong>₹{updating ? '…' : cart.total}</strong>
+          </span>
+        </button>
         <button
           className="cartbar-btn"
-          disabled={locked}
+          disabled={locked || cart.belowMinOrderValue}
           onClick={(e) => {
             e.stopPropagation();
             void place();
           }}
         >
-          {placing ? 'Placing…' : 'Place order'}
+          {placing ? 'Loading…' : 'Review & pay'}
         </button>
       </div>
     </div>

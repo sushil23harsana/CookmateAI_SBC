@@ -1,56 +1,74 @@
 'use client';
-
-import { useRef, useState } from 'react';
-
-export default function Composer({ onSend, busy }: { onSend: (t: string) => void; busy: boolean }) {
-  const [text, setText] = useState('');
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  const grow = () => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 130)}px`;
-  };
-
+export default function Composer({
+  onSend,
+  busy,
+  locked,
+  text,
+  onChange,
+  onConnect,
+}: {
+  onSend: (text: string) => void;
+  busy: boolean;
+  locked: boolean;
+  text: string;
+  onChange: (text: string) => void;
+  onConnect: () => void;
+}) {
   const submit = () => {
-    const t = text.trim();
-    if (!t || busy) return;
-    onSend(t);
-    setText('');
-    if (ref.current) ref.current.style.height = 'auto';
+    if (busy || !text.trim()) return;
+    if (locked) {
+      onConnect();
+      return;
+    }
+    onSend(text.trim());
   };
-
   return (
     <div className="composer">
       <div className="composer-inner">
         <textarea
-          ref={ref}
           rows={1}
           value={text}
-          placeholder="Tell me a dish or a budget…"
+          aria-label="Your meal idea or grocery list"
+          maxLength={2000}
+          placeholder={locked ? 'Your meal or grocery list…' : 'A dish or a grocery list…'}
           onChange={(e) => {
-            setText(e.target.value);
-            grow();
+            onChange(e.target.value);
+            e.target.style.height = 'auto';
+            e.target.style.height = `${Math.min(e.target.scrollHeight, 130)}px`;
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submit();
             }
           }}
         />
-        <button className="send" onClick={submit} disabled={busy || !text.trim()} aria-label="Send">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <button
+          className="send"
+          onClick={submit}
+          disabled={busy || !text.trim()}
+          aria-label={locked ? 'Connect Swiggy to continue' : 'Send message'}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
               d="M5 12h13M12 6l6 6-6 6"
               stroke="currentColor"
-              strokeWidth="2.2"
+              strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </svg>
         </button>
+      </div>
+      <p className="composer-caption">
+        {locked
+          ? 'Connect Swiggy to start. Your draft stays here until you’re ready.'
+          : 'Review product details and totals before ordering. AI can make mistakes.'}
+      </p>
+      <div className="composer-links">
+        <a href="/help">Help</a>
+        <span>·</span>
+        <a href="/privacy">Your data</a>
       </div>
     </div>
   );

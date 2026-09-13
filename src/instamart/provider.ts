@@ -22,6 +22,8 @@ import type {
 export interface InstamartProvider {
   readonly name: string;
 
+  listAddresses?(): Promise<Array<{ id: string; label: string }>>;
+
   /** Search for purchasable SKUs at the delivery location. */
   searchItems(query: string, maxResults: number): Promise<Sku[]>;
 

@@ -117,8 +117,7 @@ async function review(execute: ReturnType<typeof createExecutor>, ids: string[])
   assert.equal(json(res).code, 'VALIDATION');
 }
 
-// 6) Re-reviewing the same items yields a NEW cart that can be ordered again —
-//    idempotency protects retries of one confirmation, not intentional reorders.
+// 6) A new review retires older baskets, even when the items are identical.
 {
   const provider = new FakeProvider();
   const execute = createExecutor({
@@ -130,9 +129,9 @@ async function review(execute: ReturnType<typeof createExecutor>, ids: string[])
   const c1 = await review(execute, ['a']);
   const c2 = await review(execute, ['a']);
   assert.notEqual(c1.cartId, c2.cartId);
-  assert.equal(json(await execute('place_order', { cart_id: c1.cartId })).placed, true);
+  assert.equal(json(await execute('place_order', { cart_id: c1.cartId })).placed, false);
   assert.equal(json(await execute('place_order', { cart_id: c2.cartId })).placed, true);
-  assert.equal(provider.placeCount, 2);
+  assert.equal(provider.placeCount, 1);
 }
 
 // 7) The confirm gate receives the exact cart being placed (cart-bound gates
@@ -180,3 +179,73 @@ async function review(execute: ReturnType<typeof createExecutor>, ids: string[])
 }
 
 console.log('✓ executor (order safety) tests passed');
+
+// The live bill must be calculated for the full quantity, not deduplicated ids.
+{
+  const provider = new FakeProvider();
+  let bill = 0;
+  const original = provider.getItems.bind(provider);
+  provider.getItems = async (ids) => {
+    const items = await original(ids);
+    bill = items.reduce((sum, item) => sum + item.price, 0) + 35;
+    return [...new Map(items.map((item) => [item.id, item])).values()];
+  };
+  const execute = createExecutor({
+    provider: Object.assign(provider, { lastBill: () => ({ toPay: bill, lines: [] }) }),
+    carts: new CartStore(),
+    confirmOrder: async () => true,
+    ...base,
+  });
+  const cart = await review(execute, ['a', 'a']);
+  assert.equal(cart.itemsTotal, 200);
+  assert.equal(cart.total, 235);
+}
+
+// Two simultaneous confirmations cannot both reach the provider.
+{
+  const provider = new FakeProvider();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = provider.placeOrder.bind(provider);
+  provider.placeOrder = async (...args) => {
+    await gate;
+    return original(...args);
+  };
+  const execute = createExecutor({
+    provider,
+    carts: new CartStore(),
+    confirmOrder: async () => true,
+    ...base,
+  });
+  const cart = await review(execute, ['a']);
+  const first = execute('place_order', { cart_id: cart.cartId });
+  const second = json(await execute('place_order', { cart_id: cart.cartId }));
+  assert.equal(second.placed, false);
+  release();
+  assert.equal(json(await first).placed, true);
+  assert.equal(provider.placeCount, 1);
+}
+
+// An uncertain provider outcome must not be blindly submitted again.
+{
+  const provider = new FakeProvider();
+  provider.placeOrder = async () => {
+    provider.placeCount++;
+    throw new Error('connection lost');
+  };
+  const execute = createExecutor({
+    provider,
+    carts: new CartStore(),
+    confirmOrder: async () => true,
+    ...base,
+  });
+  const cart = await review(execute, ['a']);
+  await execute('place_order', { cart_id: cart.cartId });
+  const second = json(await execute('place_order', { cart_id: cart.cartId }));
+  assert.equal(second.placed, false);
+  assert.equal(provider.placeCount, 1);
+}
+
+console.log('✓ quantity, stale basket and concurrent checkout regressions passed');

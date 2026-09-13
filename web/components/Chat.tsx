@@ -1,5 +1,4 @@
 'use client';
-
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, MotionConfig } from 'framer-motion';
 import * as api from '@/lib/api';
@@ -12,460 +11,553 @@ import CartCard from './CartCard';
 import CartDock from './CartDock';
 import OrderCard from './OrderCard';
 import PaymentFlow from './PaymentFlow';
-import { InstallChip } from './Pwa';
 
-let counter = 0;
-const uid = () => `${Date.now()}-${counter++}`;
+const uid = () => crypto.randomUUID();
+type Payment = { cart: Cart; options: PaymentOptions; pending?: OrderResult; uncertain?: boolean };
+const message = (error: unknown) =>
+  error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 
 export default function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [swiggy, setSwiggy] = useState<api.SwiggyStatus | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [items, setItems] = useState<ChatItem[]>([]);
+  const [draft, setDraft] = useState('');
+  const [hydrated, setHydrated] = useState(false);
   const [phase, setPhase] = useState<Phase | null>(null);
   const [busy, setBusy] = useState(false);
-  // The most recent reviewed cart, surfaced in a sticky bar so the Place order
-  // action is always reachable even when the cart card has scrolled far up.
   const [latestCart, setLatestCart] = useState<Cart | null>(null);
   const [latestOrdered, setLatestOrdered] = useState(false);
-  // Live-provider auth: whether THIS visitor has connected their own Swiggy
-  // account. On mock the banner never shows (provider comes back as 'mock').
-  const [swiggy, setSwiggy] = useState<api.SwiggyStatus | null>(null);
-  // Their saved Swiggy addresses — availability and prices follow the pick.
   const [addresses, setAddresses] = useState<api.SwiggyAddress[]>([]);
-  const [addressId, setAddressId] = useState<string | undefined>(undefined);
-  const [addressNote, setAddressNote] = useState<string | null>(null);
-  // Non-null while the user is choosing how to pay / approving a UPI payment.
-  const [payFlow, setPayFlow] = useState<{ cart: Cart; options: PaymentOptions } | null>(null);
+  const [addressId, setAddressId] = useState<string>();
+  const [payFlow, setPayFlow] = useState<Payment | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<Payment | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
-  const streamingIdRef = useRef<string | null>(null);
+  const nearBottom = useRef(true);
+  const actionRef = useRef(false);
+  const refreshing = useRef(false);
+  const ready = swiggy?.chatAllowed === true;
+  const locked = busy || Boolean(payFlow) || Boolean(pendingPayment);
 
-  // Restore the conversation across reloads (saved when idle below).
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('cookmate_items');
+      const saved = JSON.parse(localStorage.getItem('cookmate_shop_v2') ?? 'null');
       if (saved) {
-        const parsed = JSON.parse(saved) as ChatItem[];
-        setItems(parsed);
-        // Prefer the saved dock state: manual +/- edits produce carts that
-        // never appear as cards in the stream.
-        const dock = localStorage.getItem('cookmate_dock');
-        const d = dock ? (JSON.parse(dock) as { cart?: Cart; ordered?: boolean }) : null;
-        const lastCart = d?.cart
-          ? { cart: d.cart, ordered: !!d.ordered }
-          : [...parsed].reverse().find((it) => it.kind === 'cart' && it.cart);
-        if (lastCart?.cart) {
-          setLatestCart(lastCart.cart);
-          setLatestOrdered(!!lastCart.ordered);
-        }
+        if (Array.isArray(saved.items)) setItems(saved.items.filter((it: ChatItem) => !it.streaming));
+        if (typeof saved.draft === 'string') setDraft(saved.draft);
+        if (saved.pending) setPendingPayment(saved.pending);
+        // Old quotes are history after a reload; never silently recreate an actionable order.
       }
     } catch {
-      /* ignore */
+      /* local storage may be unavailable */
     }
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (busy) return;
+    if (!hydrated || busy) return;
     try {
-      localStorage.setItem('cookmate_items', JSON.stringify(items.slice(-50)));
-    } catch {
-      /* ignore */
-    }
-  }, [items, busy]);
-
-  useEffect(() => {
-    if (!latestCart) return;
-    try {
-      localStorage.setItem('cookmate_dock', JSON.stringify({ cart: latestCart, ordered: latestOrdered }));
-    } catch {
-      /* ignore */
-    }
-  }, [latestCart, latestOrdered]);
-
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('cookmate_session') : null;
-    if (saved) {
-      setSessionId(saved);
-      return;
-    }
-    api
-      .createSession()
-      .then((id) => {
-        localStorage.setItem('cookmate_session', id);
-        setSessionId(id);
-      })
-      .catch(() => {});
-  }, []);
-
-  // A server restart wiped the old session's cart snapshot, but the browser
-  // still holds the cart. Re-review it on the fresh session so "Place order"
-  // keeps working — prices come back server-authoritative, so any drift shows.
-  const rehydrateCart = useCallback(async (newSessionId: string) => {
-    try {
-      const dock = localStorage.getItem('cookmate_dock');
-      const d = dock ? (JSON.parse(dock) as { cart?: Cart; ordered?: boolean }) : null;
-      if (!d?.cart || d.ordered) return;
-      const stale = d.cart;
-      const skuIds = stale.lines.flatMap((l) => Array<string>(Math.max(0, l.qty)).fill(l.id));
-      if (skuIds.length === 0) return;
-      const res = await api.updateCart(newSessionId, skuIds);
-      const fresh = res.cart;
-      if (!fresh) return;
-      setLatestCart(fresh);
-      setLatestOrdered(false);
-      // Swap the stream's copy of the stale card too, so both stay placeable.
-      setItems((p) =>
-        p.map((it) => (it.kind === 'cart' && it.cart?.cartId === stale.cartId ? { ...it, cart: fresh } : it)),
+      localStorage.setItem(
+        'cookmate_shop_v2',
+        JSON.stringify({ items: items.slice(-50), draft, pending: pendingPayment }),
       );
     } catch {
-      /* not connected / items unavailable — the user can rebuild by chatting */
+      /* storage is optional */
+    }
+  }, [items, draft, hydrated, busy, pendingPayment]);
+
+  const refresh = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    setChecking(true);
+    try {
+      const id = await api.ensureSession();
+      setSessionId(id);
+      const status = await api.swiggyStatus(id);
+      setSwiggy(status);
+      setNotice(null);
+      if (status.connected) {
+        const data = await api.swiggyAddresses(id);
+        setAddresses(data.addresses);
+        setAddressId(data.selected);
+        if (!data.addresses.length)
+          setNotice('Add a delivery address in the Swiggy app, then check your connection again.');
+      }
+    } catch (error) {
+      setSwiggy(null);
+      setNotice(message(error));
+    } finally {
+      setChecking(false);
+      refreshing.current = false;
     }
   }, []);
 
-  // Check connection state when the session is known, and again whenever the tab
-  // regains focus — that's the moment the user returns from Swiggy's approval page.
-  const refreshSwiggy = useCallback(() => {
-    if (!sessionId) return;
-    api
-      .swiggyStatus(sessionId)
-      .then((st) => {
-        if (!st.known) {
-          // The saved session died with a server restart — mint a fresh one;
-          // the durable user id restores any persisted Swiggy connection.
-          api
-            .createSession()
-            .then((id) => {
-              localStorage.setItem('cookmate_session', id);
-              setSessionId(id);
-              void rehydrateCart(id);
-            })
-            .catch(() => {});
-          return;
-        }
-        setSwiggy(st);
-      })
-      .catch(() => {});
-  }, [sessionId, rehydrateCart]);
-
   useEffect(() => {
-    refreshSwiggy();
-    window.addEventListener('focus', refreshSwiggy);
-    return () => window.removeEventListener('focus', refreshSwiggy);
-  }, [refreshSwiggy]);
+    void refresh();
+    const onFocus = () => {
+      if (!actionRef.current) void refresh();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refresh]);
 
-  // Once connected, load the saved addresses so the user SEES and controls
-  // where orders would deliver (the server defaults to their first address).
-  useEffect(() => {
-    if (!sessionId || swiggy?.provider !== 'swiggy' || !swiggy.connected) return;
-    api
-      .swiggyAddresses(sessionId)
-      .then(({ addresses: list, selected }) => {
-        setAddresses(list);
-        setAddressId(selected);
-        setAddressNote(
-          list.length === 0
-            ? 'No delivery address on your Swiggy account yet — add one in the Swiggy app, then refresh.'
-            : null,
-        );
-      })
-      .catch(() => setAddressNote('Could not load your Swiggy addresses — refresh to retry.'));
-  }, [sessionId, swiggy]);
+  const connect = async () => {
+    if (connecting || actionRef.current) return;
+    setConnecting(true);
+    setNotice(null);
+    try {
+      const id = await api.createSession();
+      setSessionId(id);
+      window.location.assign(api.swiggyConnectUrl(id));
+    } catch (error) {
+      setNotice(message(error));
+      setConnecting(false);
+    }
+  };
+
+  const disconnect = async () => {
+    if (!sessionId || locked) return;
+    setBusy(true);
+    try {
+      await api.sessionAction(sessionId, 'swiggy/disconnect');
+      [
+        'cookmate_resume',
+        'cookmate_session_v2',
+        'cookmate_shop_v2',
+        'cookmate_user',
+        'cookmate_items',
+        'cookmate_dock',
+        'cookmate_session',
+      ].forEach((key) => localStorage.removeItem(key));
+      setSwiggy(null);
+      setSessionId(null);
+      setItems([]);
+      setLatestCart(null);
+      setDraft('');
+      setAddresses([]);
+      setNotice('Disconnected. Your saved Cookmate connection and local conversation have been removed.');
+    } catch (error) {
+      setNotice(message(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const pickAddress = async (id: string) => {
-    if (!sessionId) return;
-    const prev = addressId;
-    setAddressId(id); // optimistic — the dropdown should feel instant
+    if (!sessionId || locked || actionRef.current) return;
+    actionRef.current = true;
+    setBusy(true);
     try {
       await api.setSwiggyAddress(sessionId, id);
-    } catch {
-      setAddressId(prev);
+      setAddressId(id);
+      setLatestCart(null);
+      setNotice(
+        'Delivery address updated. Ask Cookmate to rebuild your basket with prices for this address.',
+      );
+    } catch (error) {
+      setNotice(message(error));
+    } finally {
+      setBusy(false);
+      actionRef.current = false;
     }
   };
 
   useEffect(() => {
-    const el = streamRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    if (items.length > 0 && nearBottom.current)
+      streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'instant' });
   }, [items, phase]);
 
-  // When the on-screen keyboard opens/closes the viewport resizes; keep the
-  // stream pinned to the latest message unless the user has scrolled up to read.
-  useEffect(() => {
-    const onResize = () => {
-      const el = streamRef.current;
-      if (!el) return;
-      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 220;
-      if (nearBottom) el.scrollTo({ top: el.scrollHeight });
+  const push = (item: ChatItem) => setItems((previous) => [...previous, item]);
+  const send = async (text: string) => {
+    if (!ready || !sessionId || locked || actionRef.current) return;
+    actionRef.current = true;
+    nearBottom.current = true;
+    setBusy(true);
+    setNotice(null);
+    setDraft('');
+    setPhase('recipe');
+    push({ id: uid(), kind: 'text', role: 'user', text });
+    let streamingId: string | null = null;
+    const finishBubble = () => {
+      if (streamingId) {
+        const id = streamingId;
+        setItems((previous) =>
+          previous.map((item) => (item.id === id ? { ...item, streaming: false } : item)),
+        );
+        streamingId = null;
+      }
     };
-    window.visualViewport?.addEventListener('resize', onResize);
-    return () => window.visualViewport?.removeEventListener('resize', onResize);
-  }, []);
+    try {
+      await api.chat(sessionId, text, {
+        onStatus: (value) => {
+          finishBubble();
+          setPhase(value as Phase);
+        },
+        onCart: (cart) => {
+          push({ id: uid(), kind: 'cart', role: 'assistant', cart });
+          setLatestCart(cart);
+          setLatestOrdered(false);
+        },
+        onDelta: (delta) => {
+          setPhase(null);
+          if (!streamingId) {
+            streamingId = uid();
+            push({ id: streamingId, kind: 'text', role: 'assistant', text: delta, streaming: true });
+          } else {
+            const id = streamingId;
+            setItems((previous) =>
+              previous.map((item) => (item.id === id ? { ...item, text: (item.text ?? '') + delta } : item)),
+            );
+          }
+        },
+        onMessage: (reply) => {
+          const id = streamingId;
+          streamingId = null;
+          if (id)
+            setItems((previous) =>
+              previous.map((item) => (item.id === id ? { ...item, text: reply, streaming: false } : item)),
+            );
+          else if (reply.trim()) push({ id: uid(), kind: 'text', role: 'assistant', text: reply });
+        },
+        onError: (error) => {
+          finishBubble();
+          setNotice(error);
+          setDraft(text);
+        },
+      });
+    } catch (error) {
+      finishBubble();
+      setNotice(message(error));
+      setDraft(text);
+      if (error instanceof api.ApiError && [401, 404, 503].includes(error.status)) setSwiggy(null);
+    } finally {
+      setBusy(false);
+      setPhase(null);
+      actionRef.current = false;
+    }
+  };
 
-  const push = (it: ChatItem) => setItems((p) => [...p, it]);
+  const placeOrder = async (cart: Cart) => {
+    if (!sessionId || !ready || locked || actionRef.current || cart.cartId !== latestCart?.cartId) return;
+    actionRef.current = true;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const options = await api.paymentOptions(sessionId);
+      if (!options.codAvailable && !options.qrAvailable && !options.upiApps.length)
+        throw new Error('No payment method is available for this basket. Check Swiggy or try again later.');
+      setPayFlow({ cart, options });
+    } catch (error) {
+      setNotice(message(error));
+    } finally {
+      setBusy(false);
+      actionRef.current = false;
+    }
+  };
 
-  async function freshSession(): Promise<string> {
-    const id = await api.createSession();
-    localStorage.setItem('cookmate_session', id);
-    setSessionId(id);
-    return id;
-  }
-
-  const send = useCallback(
-    async (text: string) => {
-      if (busy) return;
-      const sid = sessionId ?? (await freshSession().catch(() => null));
-      if (!sid) {
-        push({
-          id: uid(),
-          kind: 'text',
-          role: 'assistant',
-          text: 'I could not reach the kitchen — is the server running?',
-        });
+  const changeQty = async (skuId: string, qty: number) => {
+    if (!sessionId || !latestCart || locked || actionRef.current) return;
+    actionRef.current = true;
+    setBusy(true);
+    setNotice(null);
+    const ids = latestCart.lines.flatMap((line) =>
+      Array<string>(Math.max(0, line.id === skuId ? qty : line.qty)).fill(line.id),
+    );
+    try {
+      if (!ids.length) {
+        await api.sessionAction(sessionId, 'shop/reset');
+        setLatestCart(null);
         return;
       }
-      push({ id: uid(), kind: 'text', role: 'user', text });
-      setBusy(true);
-      setPhase('recipe');
-      streamingIdRef.current = null;
-      try {
-        await api.chat(sid, text, {
-          onStatus: (p) => {
-            // A tool phase began — close any in-progress streamed bubble so later
-            // text (e.g. the post-cart summary) lands as its own message below the cart.
-            const id = streamingIdRef.current;
-            if (id) {
-              streamingIdRef.current = null;
-              setItems((prev) => prev.map((it) => (it.id === id ? { ...it, streaming: false } : it)));
-            }
-            setPhase(p as Phase);
-          },
-          onCart: (cart: Cart) => {
-            push({ id: uid(), kind: 'cart', role: 'assistant', cart, ordered: false });
-            setLatestCart(cart);
-            setLatestOrdered(false);
-          },
-          onDelta: (delta) => {
-            setPhase(null); // the model is answering now — hand off from the working state
-            if (!streamingIdRef.current) {
-              const id = uid();
-              streamingIdRef.current = id;
-              push({ id, kind: 'text', role: 'assistant', text: delta, streaming: true });
-            } else {
-              const id = streamingIdRef.current;
-              setItems((prev) =>
-                prev.map((it) => (it.id === id ? { ...it, text: (it.text ?? '') + delta } : it)),
-              );
-            }
-          },
-          onMessage: (t) => {
-            const id = streamingIdRef.current;
-            streamingIdRef.current = null;
-            if (id) {
-              setItems((prev) =>
-                prev.map((it) => (it.id === id ? { ...it, text: t, streaming: false } : it)),
-              );
-            } else if (t.trim()) {
-              push({ id: uid(), kind: 'text', role: 'assistant', text: t });
-            }
-          },
-          onError: (m) => {
-            streamingIdRef.current = null;
-            push({ id: uid(), kind: 'text', role: 'assistant', text: m });
-          },
-        });
-      } catch (err) {
-        streamingIdRef.current = null;
-        if (err instanceof api.ApiError && err.status !== 404) {
-          // Busy (409), rate-limited (429), too long (413) — the session is fine;
-          // surface the server's friendly message as the reply.
-          push({ id: uid(), kind: 'text', role: 'assistant', text: err.message });
-        } else {
-          // Network failure or expired session (server restart) — start fresh.
-          await freshSession().catch(() => {});
-          push({
-            id: uid(),
-            kind: 'text',
-            role: 'assistant',
-            text: 'I lost the thread there — mind sending that once more?',
-          });
-        }
-      } finally {
-        setBusy(false);
-        setPhase(null);
-      }
-    },
-    [busy, sessionId],
-  );
+      const result = await api.updateCart(sessionId, ids);
+      if (!result.cart)
+        throw new Error('Could not price this basket. Ask Cookmate to check product availability again.');
+      const fresh = result.cart;
+      setLatestCart(fresh);
+      setLatestOrdered(false);
+      setItems((previous) =>
+        previous.map((item) => (item.cart?.cartId === latestCart.cartId ? { ...item, cart: fresh } : item)),
+      );
+    } catch (error) {
+      setNotice(message(error));
+    } finally {
+      setBusy(false);
+      actionRef.current = false;
+    }
+  };
 
   const orderPlaced = (cart: Cart, order: OrderResult) => {
-    setItems((p) =>
-      p.map((it) => (it.kind === 'cart' && it.cart?.cartId === cart.cartId ? { ...it, ordered: true } : it)),
+    setItems((previous) =>
+      previous.map((item) => (item.cart?.cartId === cart.cartId ? { ...item, ordered: true } : item)),
     );
-    setLatestOrdered((prev) => (latestCart?.cartId === cart.cartId ? true : prev));
-    push({ id: uid(), kind: 'order', role: 'assistant', order });
+    setLatestOrdered(true);
     setPayFlow(null);
+    setPendingPayment(null);
+    push({ id: uid(), kind: 'order', role: 'assistant', order });
   };
 
-  const orderFailed = (text: string) => {
-    push({ id: uid(), kind: 'text', role: 'assistant', text });
-  };
-
-  /**
-   * Place order = the confirm gate. On the live provider, UPI options may be
-   * available for this cart — let the user pick; otherwise straight COD as before.
-   */
-  const placeOrder = async (cart: Cart) => {
-    if (!sessionId) return;
-    let options: PaymentOptions = { codAvailable: true, upiApps: [], qrAvailable: false };
-    if (swiggy?.provider === 'swiggy' && swiggy.connected) {
-      try {
-        options = await api.paymentOptions(sessionId);
-      } catch {
-        /* COD-only fallback */
-      }
-    }
-    if (options.upiApps.length > 0 || options.qrAvailable) {
-      setPayFlow({ cart, options });
-      return;
-    }
-    const res = await api.placeOrder(sessionId, cart.cartId);
-    if (res.placed && res.order) {
-      orderPlaced(cart, res.order);
-    } else {
-      orderFailed(res.error || res.reason || 'That didn’t go through — let’s try again.');
-    }
-  };
-
-  // +/- steppers: rebuild the sku list with the new quantity and have the
-  // server re-review it — the fresh authoritative snapshot replaces the dock cart.
-  const changeQty = async (skuId: string, qty: number) => {
-    if (!sessionId || !latestCart) return;
-    const skuIds = latestCart.lines.flatMap((l) =>
-      Array<string>(Math.max(0, l.id === skuId ? qty : l.qty)).fill(l.id),
+  const recordPayment = (payment: Payment) => {
+    // Persist before checkout starts so a reload cannot hide an in-flight attempt.
+    localStorage.setItem(
+      'cookmate_shop_v2',
+      JSON.stringify({ items: items.slice(-50), draft, pending: payment }),
     );
-    if (skuIds.length === 0) return; // a cart can't be reviewed empty
+    setPendingPayment(payment);
+  };
+
+  const reset = async () => {
+    if (!sessionId || locked) return;
+    setBusy(true);
     try {
-      const res = await api.updateCart(sessionId, skuIds);
-      if (res.cart) {
-        setLatestCart(res.cart);
-        setLatestOrdered(false);
-      }
-    } catch (err) {
-      push({
-        id: uid(),
-        kind: 'text',
-        role: 'assistant',
-        text:
-          err instanceof api.ApiError
-            ? err.message
-            : 'I could not update the cart — mind telling me instead?',
-      });
+      await api.sessionAction(sessionId, 'shop/reset');
+      setItems([]);
+      setLatestCart(null);
+      setDraft('');
+      setNotice(null);
+      setConfirmReset(false);
+    } catch (error) {
+      setNotice(message(error));
+    } finally {
+      setBusy(false);
     }
   };
-
-  const track = async (orderId: string): Promise<string> => {
-    if (!sessionId) return orderId;
-    const r = await api.trackOrder(sessionId, orderId);
-    return r.status;
-  };
-
-  const empty = items.length === 0;
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="app">
+      <div className={`app app-v2 ${items.length ? 'has-conversation' : ''}`}>
         <header className="topbar">
-          <div className="brand">
-            <div className="brand-mark">
-              <svg width="20" height="20" viewBox="0 0 24 24">
-                <circle cx="11" cy="13" r="6.6" fill="#fff" />
-                <circle cx="11" cy="13" r="3.3" fill="#f4a23e" />
-                <rect x="17" y="11.4" width="6.4" height="3.1" rx="1.5" fill="#fff" />
-              </svg>
-            </div>
-            <div className="brand-name">
-              Cook<em>mate</em>
-            </div>
-          </div>
-          <div className="topbar-right">
-            <InstallChip />
-            <div className="status-chip">
-              <span className="dot" />{' '}
-              {swiggy?.provider === 'swiggy'
-                ? swiggy.connected
-                  ? 'Swiggy · connected'
-                  : 'Swiggy'
-                : 'Instamart'}
-            </div>
-          </div>
-        </header>
-
-        <div className="stream" ref={streamRef} role="log" aria-live="polite" aria-relevant="additions text">
-          {empty ? <Welcome onPick={send} /> : null}
-          {items.map((it) => {
-            if (it.kind === 'cart' && it.cart) {
-              const cart = it.cart;
-              return (
-                <CartCard key={it.id} cart={cart} ordered={!!it.ordered} onPlace={() => placeOrder(cart)} />
-              );
-            }
-            if (it.kind === 'order' && it.order) {
-              const order = it.order;
-              return <OrderCard key={it.id} order={order} onTrack={() => track(order.orderId)} />;
-            }
-            return <MessageBubble key={it.id} item={it} />;
-          })}
-          <AnimatePresence>{phase ? <WorkingState key="working" phase={phase} /> : null}</AnimatePresence>
-        </div>
-
-        {swiggy?.provider === 'swiggy' && !swiggy.connected && sessionId ? (
-          <div className="connectbar">
-            <span className="connectbar-text">
-              🔐 Link your own Swiggy account — orders go to <strong>your</strong> address and payment.
+          <a className="brand" href="/" aria-label="Cookmate home">
+            <span className="brand-mark" aria-hidden="true">
+              c<span>·</span>
             </span>
-            <a className="connectbtn" href={api.swiggyConnectUrl(sessionId)} target="_blank" rel="noreferrer">
-              Connect Swiggy
+            <span className="brand-name">
+              cook<em>mate</em>
+            </span>
+          </a>
+          <nav className="topbar-right" aria-label="Account and help">
+            <a className="help-link" href="/help">
+              Help
             </a>
-          </div>
-        ) : null}
-
-        {swiggy?.provider === 'swiggy' && swiggy.connected ? (
-          addresses.length > 0 ? (
-            <div className="connectbar">
-              <span className="connectbar-text">📍 Deliver to</span>
-              <select
-                className="addrselect"
-                value={addressId ?? ''}
-                onChange={(e) => void pickAddress(e.target.value)}
-                aria-label="Delivery address"
-              >
-                {addresses.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.label}
-                  </option>
-                ))}
-              </select>
+            {ready ? (
+              <>
+                <span className={`status-chip ${swiggy?.provider === 'mock' ? 'demo-chip' : ''}`}>
+                  {swiggy?.provider === 'mock' ? 'Demo · no real orders' : '✓ Swiggy connected'}
+                </span>
+                <button
+                  className="text-action account-action"
+                  disabled={locked}
+                  onClick={() => void disconnect()}
+                >
+                  Disconnect
+                </button>
+              </>
+            ) : (
+              <button className="connectbtn" onClick={() => void connect()} disabled={connecting}>
+                {connecting ? 'Opening…' : 'Connect Swiggy'} <span aria-hidden="true">↗</span>
+              </button>
+            )}
+          </nav>
+        </header>
+        <div className="shop-layout">
+          <main className="conversation">
+            {ready && swiggy?.connected ? (
+              <div className="delivery-bar">
+                <span>Deliver to</span>
+                <select
+                  value={addressId ?? ''}
+                  onChange={(event) => void pickAddress(event.target.value)}
+                  disabled={locked || !addresses.length}
+                  aria-label="Delivery address"
+                >
+                  {!addresses.length ? (
+                    <option>No address available</option>
+                  ) : (
+                    addresses.map((address) => (
+                      <option key={address.id} value={address.id}>
+                        {address.label}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            ) : null}
+            {notice ? (
+              <div className="app-notice" role="status">
+                <span>{notice}</span>
+                <button className="text-action" disabled={busy || checking} onClick={() => void refresh()}>
+                  Check connection
+                </button>
+                <button
+                  className="notice-dismiss"
+                  aria-label="Dismiss message"
+                  onClick={() => setNotice(null)}
+                >
+                  ×
+                </button>
+              </div>
+            ) : null}
+            {items.length > 0 ? (
+              <div className="conversation-heading">
+                <span>Your kitchen conversation</span>
+                <button
+                  className="text-action"
+                  disabled={locked || !ready}
+                  onClick={() => setConfirmReset(true)}
+                >
+                  + New shop
+                </button>
+              </div>
+            ) : null}
+            {confirmReset ? (
+              <div className="app-notice">
+                <span>Start a new conversation and clear this basket?</span>
+                <button className="text-action" onClick={() => void reset()} disabled={locked}>
+                  Start fresh
+                </button>
+                <button className="text-action" onClick={() => setConfirmReset(false)}>
+                  Keep shopping
+                </button>
+              </div>
+            ) : null}
+            <div
+              className="stream"
+              ref={streamRef}
+              onScroll={() => {
+                const element = streamRef.current;
+                if (element)
+                  nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 180;
+              }}
+            >
+              {!items.length ? (
+                <Welcome
+                  ready={ready}
+                  connecting={connecting}
+                  onConnect={() => void connect()}
+                  onPick={(text) => {
+                    setDraft(text);
+                    if (!ready)
+                      setNotice('Idea saved below. Connect Swiggy, then send it when you’re ready.');
+                  }}
+                />
+              ) : null}
+              <div className="message-list" role="log" aria-live="polite" aria-relevant="additions text">
+                {items.map((item) =>
+                  item.kind === 'cart' && item.cart ? (
+                    <CartCard
+                      key={item.id}
+                      cart={item.cart}
+                      ordered={!!item.ordered}
+                      active={ready && latestCart?.cartId === item.cart.cartId && !latestOrdered}
+                      demo={swiggy?.provider === 'mock'}
+                      busy={locked}
+                      onPlace={() => placeOrder(item.cart!)}
+                    />
+                  ) : item.kind === 'order' && item.order ? (
+                    <OrderCard
+                      key={item.id}
+                      order={item.order}
+                      onTrack={async () => {
+                        if (!sessionId) throw new Error('Reconnect to check your order.');
+                        return (await api.trackOrder(sessionId, item.order!.orderId)).status;
+                      }}
+                    />
+                  ) : (
+                    <MessageBubble key={item.id} item={item} />
+                  ),
+                )}
+                <AnimatePresence>
+                  {phase ? <WorkingState key="working" phase={phase} /> : null}
+                </AnimatePresence>
+              </div>
             </div>
-          ) : addressNote ? (
-            <div className="connectbar">
-              <span className="connectbar-text">📍 {addressNote}</span>
-            </div>
-          ) : null
-        ) : null}
-
-        {latestCart && !latestOrdered ? (
-          <CartDock cart={latestCart} busy={busy} onPlace={placeOrder} onChangeQty={changeQty} />
-        ) : null}
-
+            {pendingPayment ? (
+              <div className="app-notice">
+                <span>A payment needs checking. Don’t place another order yet.</span>
+                <button className="text-action" disabled={!ready} onClick={() => setPayFlow(pendingPayment)}>
+                  Check payment
+                </button>
+                {pendingPayment.uncertain ? (
+                  <button
+                    className="text-action"
+                    onClick={() => {
+                      setPendingPayment(null);
+                      setLatestCart(null);
+                      setNotice(
+                        'Ask Cookmate to review a fresh basket only if Swiggy shows no order or payment pending.',
+                      );
+                    }}
+                  >
+                    I’ve checked in Swiggy
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            <Composer
+              text={draft}
+              onChange={setDraft}
+              onSend={(text) => void send(text)}
+              busy={locked || connecting}
+              locked={!ready}
+              onConnect={() => void connect()}
+            />
+          </main>
+          {items.length > 0 ? (
+            <aside className="basket-sidebar" aria-label="Current basket">
+              <div className="sidebar-title">
+                <span>Your basket</span>
+                <span className="eyebrow">INSTAMART</span>
+              </div>
+              {latestCart && !latestOrdered ? (
+                <CartDock
+                  cart={latestCart}
+                  busy={locked || !ready}
+                  onPlace={placeOrder}
+                  onChangeQty={changeQty}
+                />
+              ) : (
+                <div className="basket-empty">
+                  <span aria-hidden="true">🧺</span>
+                  <h2>{latestOrdered ? 'You’re all set.' : 'A little room for good things.'}</h2>
+                  <p>
+                    {latestOrdered
+                      ? 'Your order details are in the conversation.'
+                      : 'Your current basket will appear here. Ask for a meal or send your grocery list.'}
+                  </p>
+                  {items.some((item) => item.cart) && !latestOrdered ? (
+                    <p>Saved baskets are history. Ask Cookmate to check today’s prices before ordering.</p>
+                  ) : null}
+                </div>
+              )}
+              <div className="sidebar-note">
+                Built with Swiggy Instamart.
+                <br />
+                You review every basket before ordering.
+              </div>
+            </aside>
+          ) : null}
+        </div>
         {payFlow && sessionId ? (
           <PaymentFlow
             sessionId={sessionId}
             cart={payFlow.cart}
             options={payFlow.options}
+            initialOrder={payFlow.pending}
+            initialUncertain={payFlow.uncertain}
+            address={addresses.find((address) => address.id === addressId)?.label}
+            onAttempt={() => recordPayment({ ...payFlow, uncertain: true })}
+            onPending={(order) => recordPayment({ ...payFlow, pending: order, uncertain: !order.paasId })}
+            onTerminal={() => {
+              setPendingPayment(null);
+              setLatestCart(null);
+            }}
             onPlaced={(order) => orderPlaced(payFlow.cart, order)}
-            onFailedText={orderFailed}
+            onFailedText={setNotice}
             onClose={() => setPayFlow(null)}
           />
         ) : null}
-
-        <Composer onSend={send} busy={busy} />
       </div>
     </MotionConfig>
   );

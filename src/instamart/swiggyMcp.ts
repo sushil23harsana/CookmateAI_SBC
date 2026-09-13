@@ -257,6 +257,7 @@ export class SwiggyInstamartProvider implements InstamartProvider {
    * cart with exactly these items, then get_cart returns the priced line items + bill.
    */
   async getItems(ids: string[]): Promise<Sku[]> {
+    this.bill = undefined;
     const address = await this.resolveAddress();
     await this.call(
       this.resolve('updateCart'),
@@ -274,6 +275,9 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     // Swiggy's billBreakdown is the ONLY truthful final amount — delivery fee,
     // taxes and discounts never appear on the item prices themselves.
     this.bill = parseBill(asRecord(cart));
+    if (this.bill?.toPay === undefined || this.bill.toPay < 0) {
+      throw new ProviderError('Swiggy did not return a payable total. Please review the basket again.');
+    }
     logger.info('swiggy cart priced', {
       requested: new Set(ids).size,
       priced: skus.length,
@@ -303,11 +307,16 @@ export class SwiggyInstamartProvider implements InstamartProvider {
     const address = await this.resolveAddress();
     // Re-assert the exact reviewed items so the server cart can't have drifted between
     // review and confirmation (update_cart is documented as safe to retry).
-    await this.call(
-      this.resolve('updateCart'),
-      { selectedAddressId: address.id, items: toCartItems(skuIds) },
-      2,
-    );
+    const priced = await this.getItems(skuIds);
+    if (
+      skuIds.some((id) => !priced.some((item) => item.id === id && item.inStock)) ||
+      this.bill?.toPay === undefined ||
+      Math.abs(this.bill.toPay - total) > 0.005
+    ) {
+      throw new ProviderError(
+        'Availability or the payable total changed. Review a fresh basket before ordering.',
+      );
+    }
 
     // Cash is the documented default; UPI adds intentApp (mobile) or a QR (desktop).
     const args: Record<string, unknown> = { addressId: address.id };
@@ -328,33 +337,11 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       }
       return order;
     } catch (err) {
-      // Documented check-then-retry: checkout is not idempotent, so on failure verify
-      // whether the order actually went through before surfacing an error.
-      logger.warn('checkout failed — verifying via get_orders', { message: msg(err) });
-      await sleep(2500);
-      const placed = await this.findJustPlacedOrder();
-      if (placed) return { ...placed, total };
-      throw err;
+      logger.warn('checkout result uncertain', { message: msg(err) });
+      throw new ProviderError(
+        'Swiggy did not confirm the result. Check your orders in the Swiggy app before trying again.',
+      );
     }
-  }
-
-  /** After a failed checkout, look for an order created moments ago (docs' verify step). */
-  private async findJustPlacedOrder(): Promise<OrderResult | undefined> {
-    try {
-      const data = asRecord(await this.call(this.resolve('orders'), {}, 1));
-      const latest = firstArray(data, ['orders', 'items', 'results'])[0] as
-        Record<string, unknown> | undefined;
-      const orderId = str(latest?.orderId ?? latest?.order_id ?? latest?.id);
-      const createdAt = num(latest?.createdAt ?? latest?.created_at ?? latest?.orderTime);
-      const isFresh = createdAt !== undefined && Math.abs(Date.now() - createdAt) < 3 * 60_000;
-      if (orderId && isFresh) {
-        logger.info('checkout had succeeded — recovered via get_orders', { orderId });
-        return { orderId, status: str(latest?.status) ?? 'PLACED', total: 0, raw: latest };
-      }
-    } catch {
-      /* verification is best-effort; the original error is surfaced */
-    }
-    return undefined;
   }
 
   async trackOrder(orderId: string): Promise<TrackResult> {
@@ -385,7 +372,8 @@ export class SwiggyInstamartProvider implements InstamartProvider {
       Record<string, unknown>
     >;
     return {
-      codAvailable: true, // v1 platform default; the cod object just carries its label
+      codAvailable:
+        data.cod !== false && asRecord(data.cod).available !== false && asRecord(data.cod).enabled !== false,
       upiApps: mobileMethods
         .map((m) => ({ id: str(m.id) ?? '', label: str(m.label) ?? '' }))
         .filter((m) => m.id && m.label),
@@ -530,11 +518,16 @@ function toCartItems(ids: string[]): Array<{ spinId: string; quantity: number }>
   return [...qty.entries()].map(([spinId, quantity]) => ({ spinId, quantity }));
 }
 
-function toOrder(data: Record<string, unknown>, total: number, idempotencyKey: string): OrderResult {
+function toOrder(data: Record<string, unknown>, total: number, _idempotencyKey: string): OrderResult {
+  const orderId = str(data.orderId ?? data.order_id ?? data.id);
+  if (!orderId)
+    throw new ProviderError(
+      'Swiggy did not return an order reference. Check your orders in Swiggy before retrying.',
+    );
   const status = str(data.status) ?? 'PLACED';
-  const pendingPayment = status.toUpperCase() === 'PENDING_PAYMENT';
+  const pendingPayment = ['PENDING_PAYMENT', 'PAYMENT_PENDING'].includes(status.toUpperCase());
   return {
-    orderId: str(data.orderId ?? data.order_id ?? data.id) ?? `UNVERIFIED-${idempotencyKey.slice(-8)}`,
+    orderId,
     status,
     etaMinutes: num(data.etaMinutes ?? data.eta),
     total,

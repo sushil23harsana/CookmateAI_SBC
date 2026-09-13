@@ -23,27 +23,25 @@ async function errorFrom(res: Response): Promise<ApiError> {
   return new ApiError(msg, res.status);
 }
 
-/**
- * The browser's anonymous durable id (random uuid, no PII). Keys the server-side
- * persisted Swiggy connection, so returning users don't have to reconnect.
- */
-export function durableUserId(): string {
-  let u = localStorage.getItem('cookmate_user');
-  if (!u) {
-    u = crypto.randomUUID();
-    localStorage.setItem('cookmate_user', u);
-  }
-  return u;
+let creatingSession: Promise<string> | null = null;
+export function createSession(): Promise<string> {
+  creatingSession ??= requestSession().finally(() => {
+    creatingSession = null;
+  });
+  return creatingSession;
 }
 
-export async function createSession(): Promise<string> {
+async function requestSession(): Promise<string> {
   const r = await fetch(`${BASE}/api/session`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: durableUserId() }),
+    body: JSON.stringify({ resumeToken: localStorage.getItem('cookmate_resume') }),
+    signal: AbortSignal.timeout(60_000),
   });
   if (!r.ok) throw new Error('Could not start a session');
-  const { sessionId } = (await r.json()) as { sessionId: string };
+  const { sessionId, resumeToken } = (await r.json()) as { sessionId: string; resumeToken: string };
+  localStorage.setItem('cookmate_resume', resumeToken);
+  localStorage.setItem('cookmate_session_v2', sessionId);
   return sessionId;
 }
 
@@ -53,6 +51,7 @@ export interface ChatHandlers {
   onDelta?: (delta: string) => void;
   onMessage?: (text: string) => void;
   onError?: (message: string) => void;
+  onDone?: () => void;
 }
 
 /** POST a message and consume the SSE stream (fetch + manual parser, since EventSource can't POST). */
@@ -70,6 +69,14 @@ export async function chat(sessionId: string, message: string, h: ChatHandlers):
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let complete = false;
+  const handlers = {
+    ...h,
+    onDone: () => {
+      complete = true;
+      h.onDone?.();
+    },
+  };
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -80,9 +87,11 @@ export async function chat(sessionId: string, message: string, h: ChatHandlers):
     while ((sep = buffer.indexOf('\n\n')) !== -1) {
       const raw = buffer.slice(0, sep);
       buffer = buffer.slice(sep + 2);
-      dispatch(raw, h);
+      dispatch(raw, handlers);
     }
   }
+  if (!complete)
+    throw new Error('The reply was interrupted. Your draft is saved; try again when the connection returns.');
 }
 
 function dispatch(raw: string, h: ChatHandlers): void {
@@ -115,6 +124,9 @@ function dispatch(raw: string, h: ChatHandlers): void {
     case 'error':
       h.onError?.(String(payload.message ?? 'Something went wrong.'));
       break;
+    case 'done':
+      h.onDone?.();
+      break;
   }
 }
 
@@ -123,19 +135,22 @@ export interface SwiggyStatus {
   /** False when the session id is unknown to the server (restart / TTL). */
   known: boolean;
   connected: boolean;
+  chatAllowed: boolean;
   expiresAt?: string;
 }
 
 /** Whether THIS session's user has connected their Swiggy account. */
 export async function swiggyStatus(sessionId: string): Promise<SwiggyStatus> {
-  const r = await fetch(`${BASE}/api/swiggy/status?sessionId=${encodeURIComponent(sessionId)}`);
-  if (!r.ok) return { provider: 'mock', known: true, connected: false };
+  const r = await fetch(`${BASE}/api/swiggy/status?sessionId=${encodeURIComponent(sessionId)}`, {
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!r.ok) throw await errorFrom(r);
   return r.json();
 }
 
 /** Where the "Connect Swiggy" button sends the user (their approval, their account). */
 export const swiggyConnectUrl = (sessionId: string): string =>
-  `${BASE}/oauth/start?session=${encodeURIComponent(sessionId)}`;
+  `${BASE}/oauth/start?session=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(window.location.origin)}`;
 
 export interface SwiggyAddress {
   id: string;
@@ -188,13 +203,14 @@ export async function placeOrder(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId, cartId, ...(payment ? { payment } : {}) }),
   });
+  if (!r.ok) throw await errorFrom(r);
   return r.json();
 }
 
 /** Payment methods for the current cart (COD-only unless connected to Swiggy). */
 export async function paymentOptions(sessionId: string): Promise<PaymentOptions> {
   const r = await fetch(`${BASE}/api/payment/options?sessionId=${encodeURIComponent(sessionId)}`);
-  if (!r.ok) return { codAvailable: true, upiApps: [], qrAvailable: false };
+  if (!r.ok) throw await errorFrom(r);
   return r.json();
 }
 
@@ -234,6 +250,34 @@ export async function trackOrder(sessionId: string, orderId: string): Promise<Tr
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId, orderId }),
   });
-  if (!r.ok) return { orderId, status: 'UNKNOWN' };
+  if (!r.ok) throw await errorFrom(r);
   return r.json();
+}
+
+let initializing: Promise<string> | null = null;
+export function ensureSession(): Promise<string> {
+  if (initializing) return initializing;
+  initializing = (async () => {
+    const saved = localStorage.getItem('cookmate_session_v2');
+    if (saved) {
+      const status = await swiggyStatus(saved);
+      if (status.known) return saved;
+    }
+    return createSession();
+  })().finally(() => {
+    initializing = null;
+  });
+  return initializing;
+}
+
+export async function sessionAction(
+  sessionId: string,
+  action: 'swiggy/disconnect' | 'shop/reset',
+): Promise<void> {
+  const response = await fetch(`${BASE}/api/${action}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  });
+  if (!response.ok) throw await errorFrom(response);
 }

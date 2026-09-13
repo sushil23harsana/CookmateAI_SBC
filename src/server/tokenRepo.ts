@@ -3,9 +3,8 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 
 /**
- * Durable home for each user's Swiggy bearer token, keyed by the browser's
- * anonymous user id (a random uuid — deliberately no PII, per Swiggy's DPDP
- * guidance). Lets a connection survive session expiry and Render's free-tier
+ * Durable home for each user's Swiggy bearer token, keyed by a server-computed
+ * hash of the browser's resume credential. Lets a connection survive session expiry and Render's free-tier
  * sleep/restarts; tokens still expire after 5 days regardless.
  *
  * OPTIONAL: without DATABASE_URL every call is a no-op and the app behaves
@@ -89,3 +88,9 @@ export async function saveToken(userId: string, token: string, expiresAt?: numbe
 }
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+export async function deleteToken(userId: string): Promise<void> {
+  if (!sql) return;
+  await init();
+  await sql`DELETE FROM swiggy_tokens WHERE user_id = ${userId}`;
+}

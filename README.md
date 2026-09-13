@@ -22,24 +22,15 @@ store products that fit your budget, and one tap to order and track.
    store data. Nothing is ordered until *you* tap **Place order**.
 6. **Orders and tracks** — confirm once, then follow the delivery live.
 
-## Why it's safe to trust with money
+## Shopping controls
 
-The AI proposes; deterministic code disposes. These guarantees are enforced in
-code the model cannot reach, and covered by automated tests:
+- Connect Swiggy before using live chat. The server verifies access before invoking the model; a browser-only toggle cannot bypass it.
+- Review the current basket, delivery address, bill and payment method before ordering. Older baskets become read-only after an edit or reload.
+- Repeated products carry their full quantity into Swiggy's bill. Checkout rechecks availability and the payable total, and stops when they change.
+- A session lock and a per-cart in-flight guard prevent simultaneous submissions. Ambiguous checkout responses are not retried or presented as confirmed orders.
+- Pending payment details are saved in this browser so a reload can resume checking instead of submitting another order.
 
-- **The AI can never invent a price or total.** Carts are computed server-side
-  from the store's own data.
-- **The cart you see is the cart you're charged for.** Orders are bound to the
-  exact reviewed cart — showing one thing and charging another is impossible.
-- **Nothing is bought without your tap**, and a hard spend cap sits behind even
-  that.
-- **Retries never double-charge.** Ordering is idempotent end to end.
-- The API is rate-limited, input-validated, and keeps every user's data
-  isolated.
-
-The full adversarial review — 14 attack vectors, each mapped to its mitigation
-and its test — is in [THREAT_MODEL.md](THREAT_MODEL.md). An honest engineering
-assessment is in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+These controls do not provide durable, end-to-end exactly-once ordering. Sessions and checkout guards still live in one API process; Swiggy checkout is not idempotent. Check the Swiggy app when an outcome is uncertain. See [APP_RELEASE.md](APP_RELEASE.md) for validation and remaining launch work.
 
 ## How it works
 
@@ -68,8 +59,9 @@ bun run app                 # API :8787 + web UI :3000 → open http://localhost
 
 Prefer a terminal? `bun run dev` gives the same assistant as a CLI chat.
 
-**Go live on Swiggy:** set `COOKMATE_PROVIDER=swiggy` and `SWIGGY_MCP_TOKEN`
-(OAuth 2.1 bearer) in `.env` — same app, real inventory. Deployment guide:
+**Go live on Swiggy:** set `COOKMATE_PROVIDER=swiggy`. Web visitors connect
+their own Swiggy accounts using the hosted OAuth flow. The operator token is
+not used for a visitor’s web session. Deployment guide:
 [DEPLOY.md](DEPLOY.md).
 
 ## Quality
